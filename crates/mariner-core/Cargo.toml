@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 mariner-feeds = { path = "../mariner-feeds" }
+mercury-parser.workspace = true
 
 [lints]
 workspace = true

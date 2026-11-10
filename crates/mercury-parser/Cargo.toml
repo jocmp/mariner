@@ -1,0 +1,35 @@
+[package]
+name = "mercury-parser"
+description = "Extracts the meaningful content from a web page. A Rust port of Mercury Parser."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+keywords = ["mercury", "parser", "reader", "article", "readability"]
+categories = ["parser-implementations", "web-programming"]
+
+[features]
+default = ["fetch"]
+# Fetch pages over HTTP. Without it, pass HTML via `ParseOptions::html`.
+fetch = ["dep:reqwest"]
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+dom_query.workspace = true
+encoding_rs.workspace = true
+html5ever.workspace = true
+htmd.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true
