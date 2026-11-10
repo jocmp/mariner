@@ -4,13 +4,16 @@
 mod date;
 mod decode;
 mod json_feed;
+mod media;
 mod model;
 mod rules;
 mod sax;
 mod tree;
 mod xhtml;
 
-pub use model::{Enclosure, Entry, Feed, Format, Itunes};
+pub use model::{
+    Enclosure, Entry, Feed, Format, Itunes, Media, MediaContent, MediaThumbnail, Youtube,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <title>Media Atom</title>
+  <link rel="alternate" type="text/html" href="https://example.org/"/>
+  <entry>
+    <title>Atom media</title>
+    <id>urn:example:media:1</id>
+    <link rel="alternate" type="text/html" href="https://example.org/1"/>
+    <link rel="enclosure" type="audio/mpeg" length="3000" href="https://example.org/1.mp3"/>
+    <updated>2024-10-05T10:11:12Z</updated>
+    <media:thumbnail url="https://example.org/1.jpg" width="640" height="360"/>
+    <media:content url="https://example.org/1.png" type="image/png" medium="image">
+      <media:description>Alt text</media:description>
+    </media:content>
+  </entry>
+</feed>

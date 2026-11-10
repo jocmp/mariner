@@ -20,6 +20,7 @@ pub struct Feed {
     pub icon: Option<String>,
     pub image_url: Option<String>,
     pub itunes_image: Option<String>,
+    pub youtube_channel_id: Option<String>,
     pub entries: Vec<Entry>,
 }
 
@@ -50,9 +51,18 @@ pub struct Entry {
     pub updated: Option<DateTime<Utc>>,
     pub categories: Vec<String>,
     pub image: Option<String>,
+    /// The enclosure of an entry in a podcast (iTunes) feed or a JSON Feed
+    /// attachment. Other feeds' enclosures are only in `enclosures`.
     pub enclosure: Option<Enclosure>,
+    /// Every enclosure the entry lists: RSS `<enclosure>` elements, Atom
+    /// `rel="enclosure"` links and JSON Feed attachments.
+    pub enclosures: Vec<Enclosure>,
+    /// Media RSS (`media:*`), when the entry has any.
+    pub media: Option<Media>,
     /// Present for entries of podcast (iTunes) feeds.
     pub itunes: Option<Itunes>,
+    /// Present for entries of YouTube feeds.
+    pub youtube: Option<Youtube>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -61,6 +71,48 @@ pub struct Enclosure {
     #[serde(rename = "type")]
     pub mime_type: Option<String>,
     pub length: Option<String>,
+}
+
+/// Media RSS for an entry (https://www.rssboard.org/media-rss).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Media {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub contents: Vec<MediaContent>,
+    pub thumbnails: Vec<MediaThumbnail>,
+    pub star_average: Option<String>,
+    pub star_count: Option<String>,
+    pub views: Option<String>,
+}
+
+/// A `media:content`. Numbers are as written.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MediaContent {
+    pub url: String,
+    #[serde(rename = "type")]
+    pub mime_type: Option<String>,
+    /// `image`, `audio`, `video`, `document` or `executable`.
+    pub medium: Option<String>,
+    pub width: Option<String>,
+    pub height: Option<String>,
+    pub file_size: Option<String>,
+    pub duration: Option<String>,
+    pub title: Option<String>,
+    /// Often an image's alt text.
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MediaThumbnail {
+    pub url: String,
+    pub width: Option<String>,
+    pub height: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Youtube {
+    pub video_id: Option<String>,
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

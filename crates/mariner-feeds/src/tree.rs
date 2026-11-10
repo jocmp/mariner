@@ -20,7 +20,11 @@ pub(crate) enum Node {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Element {
+    /// The name matched against rules; loses its prefix in preprocessed
+    /// documents.
     pub name: String,
+    /// The name as written in the document.
+    pub qualified_name: String,
     pub attrs: Vec<(String, String)>,
     pub children: Vec<Node>,
     /// False when the document ended (or broke) before the end tag.
@@ -113,6 +117,7 @@ fn element(start: &BytesStart) -> Option<Element> {
         attrs.push((key, value.into_owned()));
     }
     Some(Element {
+        qualified_name: name.clone(),
         name,
         attrs,
         children: Vec::new(),

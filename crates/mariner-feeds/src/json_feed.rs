@@ -40,6 +40,7 @@ pub(crate) fn parse(text: &str) -> Result<Feed, Error> {
         icon: string(&feed, "icon"),
         image_url: None,
         itunes_image: None,
+        youtube_channel_id: None,
         entries,
     })
 }
@@ -85,18 +86,30 @@ fn entry(item: &Map<String, Value>, feed_author: Option<&str>) -> Entry {
             _ => Vec::new(),
         },
         image: string(item, "image"),
-        enclosure: attachment.and_then(|attachment| {
-            Some(Enclosure {
-                url: string(attachment, "url")?,
-                mime_type: string(attachment, "mime_type"),
-                length: attachment
-                    .get("size_in_bytes")
-                    .filter(|size| !size.is_null())
-                    .map(|size| size.to_string()),
-            })
-        }),
+        enclosure: attachment.and_then(attachment_enclosure),
+        enclosures: match item.get("attachments") {
+            Some(Value::Array(attachments)) => attachments
+                .iter()
+                .filter_map(Value::as_object)
+                .filter_map(attachment_enclosure)
+                .collect(),
+            _ => Vec::new(),
+        },
+        media: None,
         itunes: None,
+        youtube: None,
     }
+}
+
+fn attachment_enclosure(attachment: &Map<String, Value>) -> Option<Enclosure> {
+    Some(Enclosure {
+        url: string(attachment, "url")?,
+        mime_type: string(attachment, "mime_type"),
+        length: attachment
+            .get("size_in_bytes")
+            .filter(|size| !size.is_null())
+            .map(|size| size.to_string()),
+    })
 }
 
 fn author_name(author: Option<&Value>) -> Option<String> {

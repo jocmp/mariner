@@ -126,6 +126,8 @@ pub(crate) enum Field {
     ItunesSubtitle,
     ItunesSummary,
     ItunesTitle,
+    YoutubeVideoId,
+    YoutubeChannelId,
     /// Matched but unused; still takes part in rule selection.
     Other,
     Entries,
@@ -343,6 +345,7 @@ static YOUTUBE_FEED: &[Rule] = &[
     attr_with("link", Field::Url, "href", ALTERNATE),
     attr_with("link", Field::FeedUrl, "href", SELF),
     text("name", Field::Other),
+    text("yt:channelId", Field::YoutubeChannelId),
     collection("entry", Field::Entries, Class::Entry(Flavor::Youtube)),
 ];
 
@@ -478,8 +481,8 @@ static YOUTUBE_ENTRY: &[Rule] = atom_entry!(
     [];
     attr_with("link", Field::Url, "href", ALTERNATE),
     text("media:description", Field::Content),
-    text("yt:videoId", Field::Other),
-    text("yt:channelId", Field::Other),
+    text("yt:videoId", Field::YoutubeVideoId),
+    text("yt:channelId", Field::YoutubeChannelId),
     text("media:title", Field::Other),
     attr("media:content", Field::Other, "url"),
     attr("media:thumbnail", Field::Other, "url"),

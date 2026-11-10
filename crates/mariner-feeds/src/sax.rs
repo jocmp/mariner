@@ -13,7 +13,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 
 use crate::date;
-use crate::model::{Enclosure, Entry, Feed, Format, Itunes};
+use crate::media;
+use crate::model::{Enclosure, Entry, Feed, Format, Itunes, Media, Youtube};
 use crate::rules::{self, Class, Field, Flavor, Kind, Rule};
 use crate::tree::{self, Element, Node};
 use crate::xhtml;
@@ -40,6 +41,9 @@ struct Object {
     /// Guid text, and its `isPermaLink` attribute.
     guid: Option<String>,
     perma_link: Option<String>,
+    /// Read from an entry's element directly, outside the rules.
+    media: Option<Media>,
+    enclosures: Vec<Enclosure>,
 }
 
 impl Object {
@@ -91,7 +95,16 @@ impl Handler {
 
     fn element(&mut self, element: &Element) {
         let name = element.name.replace('-', "_");
+        let depth = self.stack.len();
         self.start(&name, &element.attrs);
+        if self.stack.len() > depth
+            && let Some(frame) = self.stack.last()
+            && frame.rule.is_some_and(|rule| rule.field == Field::Entries)
+        {
+            let entry = &mut self.objects[frame.object];
+            entry.media = media::media(element);
+            entry.enclosures = media::enclosures(element);
+        }
         self.walk(&element.children);
         if element.closed {
             self.end(&name);
@@ -275,6 +288,7 @@ impl Handler {
             icon: owned(feed.single(Field::Icon)),
             image_url: owned(image.and_then(|image| image.single(Field::Url))),
             itunes_image: owned(feed.single(Field::ItunesImage)),
+            youtube_channel_id: owned(feed.single(Field::YoutubeChannelId)),
             entries: feed
                 .entries
                 .iter()
@@ -348,7 +362,13 @@ impl Handler {
                 .collect(),
             image: owned(entry.single(Field::Image)),
             enclosure,
+            enclosures: entry.enclosures.clone(),
+            media: entry.media.clone(),
             itunes,
+            youtube: (flavor == Flavor::Youtube).then(|| Youtube {
+                video_id: owned(entry.single(Field::YoutubeVideoId)),
+                channel_id: owned(entry.single(Field::YoutubeChannelId)),
+            }),
         }
     }
 }

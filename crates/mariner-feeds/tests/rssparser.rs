@@ -807,3 +807,106 @@ const CASES: &[Case] = &[
         ..Case::DEFAULT
     },
 ];
+
+/// Media these fixtures were written to test: YouTube's media group,
+/// `media:content` images, and audio or video enclosures.
+#[test]
+fn reads_media() {
+    let youtube = first_entry("atom-feed-youtube.xml");
+    let media = youtube.media.unwrap();
+    assert_eq!(
+        youtube.youtube.unwrap().video_id.as_deref(),
+        Some("W_S7iKZZdHw")
+    );
+    assert_eq!(
+        media.title.as_deref(),
+        Some("Digital Foundry Games of 2024: The Oliver Mackenzie Collection!")
+    );
+    assert_eq!(
+        media.contents[0].url,
+        "https://www.youtube.com/v/W_S7iKZZdHw?version=3"
+    );
+    assert_eq!(
+        media.thumbnails[0].url,
+        "https://i4.ytimg.com/vi/W_S7iKZZdHw/hqdefault.jpg"
+    );
+    assert!(media.description.unwrap().starts_with(
+        "As the holiday period begins to unwind, we continue to look back on an excellent 2024"
+    ));
+
+    let mastodon = first_entry("feed-multiple-media-content.xml")
+        .media
+        .unwrap();
+    let contents: Vec<_> = mastodon
+        .contents
+        .iter()
+        .map(|content| (content.url.as_str(), content.mime_type.as_deref()))
+        .collect();
+    let files = "https://cdn.masto.host/mastodonart/media_attachments/files/114/495";
+    assert_eq!(
+        contents,
+        [
+            (
+                &*format!("{files}/754/804/385/848/original/dee105af83a73921.jpg"),
+                Some("image/jpeg")
+            ),
+            (
+                &*format!("{files}/755/611/292/322/original/c332f57157abc203.jpg"),
+                Some("image/jpeg")
+            ),
+            (
+                &*format!("{files}/756/453/333/085/original/f0baf8d5c4be0461.jpg"),
+                Some("image/jpeg")
+            ),
+            (
+                &*format!("{files}/757/644/563/056/original/884111c48e491831.jpg"),
+                Some("image/jpeg")
+            ),
+        ]
+    );
+    assert_eq!(
+        mastodon.contents[0].description.as_deref(),
+        Some("Raiders ride giant lizards across the desert.")
+    );
+
+    let audio = [
+        (
+            "feed-itunes-season.xml",
+            "https://sphinx.acast.com/p/acast/s/with-gourley-and-rust/e/635861df5f0a000012334a6f/media.mp3",
+        ),
+        (
+            "feed-test-charset.xml",
+            "https://podkast.nrk.no/fil/loerdagsraadet/23ee45fc-d869-4110-bf97-34138fcfaba6_0_ID192MP3.mp3",
+        ),
+        (
+            "feed-test-image-channel-reverse.xml",
+            "http://traffic.libsyn.com/joeroganexp/p1405.mp3?dest-id=19997",
+        ),
+    ];
+    for (fixture, url) in audio {
+        let entry = first_entry(fixture);
+        assert_eq!(
+            entry.enclosure.map(|e| e.url).as_deref(),
+            Some(url),
+            "{fixture}"
+        );
+        assert_eq!(entry.enclosures[0].url, url, "{fixture}");
+    }
+
+    let video = first_entry("feed-test-multiple-image-and-video.xml");
+    let video = video
+        .enclosures
+        .iter()
+        .find(|enclosure| enclosure.mime_type.as_deref() == Some("video/mp4"))
+        .map(|enclosure| enclosure.url.as_str());
+    assert_eq!(
+        video,
+        Some("https://motor.media.eagleplatform.com/index/player?record_id=1410861")
+    );
+}
+
+fn first_entry(fixture: &str) -> mariner_feeds::Entry {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/rssparser");
+    let bytes = std::fs::read(format!("{path}/{fixture}")).unwrap();
+    mariner_feeds::parse(&bytes).unwrap().entries.remove(0)
+}

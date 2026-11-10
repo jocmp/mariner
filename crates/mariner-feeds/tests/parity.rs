@@ -4,7 +4,8 @@
 //! `{ "fixture_sha256", "base_url", "document" }`, where `base_url` is the
 //! URL the feed is treated as subscribed from and each entry carries its
 //! `public_id` for that URL. The parser's own output is written to
-//! `outputs/feeds-actual/` for diffing.
+//! `outputs/feeds-actual/` for diffing. Fields the reference doesn't read
+//! (see `drop_unreferenced`) aren't compared.
 //!
 //! Without reference output, the test skips. `MARINER_PARITY_ONLY=<prefix>`
 //! narrows the run to fixtures whose name starts with the prefix.
@@ -69,6 +70,8 @@ fn matches_reference_output() {
             }
         };
         write_actual(&outputs, &name, &actual);
+        let mut actual = actual;
+        drop_unreferenced(&reference["document"], &mut actual);
 
         match first_difference(&reference["document"], &actual, "$") {
             None => matched += 1,
@@ -91,6 +94,29 @@ fn document(feed: &mariner_feeds::Feed, base_url: &str) -> Value {
         json["public_id"] = Value::String(entry.public_id(base_url));
     }
     value
+}
+
+/// Removes what the parser reads beyond the reference: every entry's
+/// `enclosures`, and `media` wherever the reference has none (it reads
+/// Media RSS only for YouTube entries).
+fn drop_unreferenced(expected: &Value, actual: &mut Value) {
+    let empty = Vec::new();
+    let expected_entries = expected["entries"].as_array().unwrap_or(&empty);
+    let Some(entries) = actual["entries"].as_array_mut() else {
+        return;
+    };
+    for (index, entry) in entries.iter_mut().enumerate() {
+        let Some(entry) = entry.as_object_mut() else {
+            continue;
+        };
+        entry.remove("enclosures");
+        if expected_entries
+            .get(index)
+            .is_none_or(|e| e["media"].is_null())
+        {
+            entry.remove("media");
+        }
+    }
 }
 
 /// Writes the parser's output under `outputs/feeds-actual/` for diffing.

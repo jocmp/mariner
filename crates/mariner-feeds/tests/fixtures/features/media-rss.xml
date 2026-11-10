@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Media RSS</title>
+    <link>https://example.org/</link>
+    <item>
+      <title>Grouped media</title>
+      <guid isPermaLink="false">media-1</guid>
+      <media:group>
+        <media:title>Group title</media:title>
+        <media:description type="plain">Group &amp; description</media:description>
+        <media:content url="https://example.org/clip.mp4" type="video/mp4" medium="video" width="1280" height="720" fileSize="1000" duration="61">
+          <media:title>Clip title</media:title>
+          <media:description>Clip description</media:description>
+        </media:content>
+        <media:content url="https://example.org/clip.mp3" type="audio/mpeg" medium="audio"/>
+        <media:content type="video/mp4"/>
+        <media:thumbnail url="https://example.org/clip.jpg" width="320" height="180"/>
+        <media:community>
+          <media:starRating average="4.5" count="12"/>
+          <media:statistics views="345"/>
+        </media:community>
+      </media:group>
+      <media:thumbnail url="https://example.org/second.jpg"/>
+      <media:title>Later title is ignored</media:title>
+      <enclosure url="https://example.org/episode.mp3" type="audio/mpeg" length="2000"/>
+      <enclosure url="https://example.org/cover.jpg" type="image/jpeg"/>
+      <enclosure url=" "/>
+    </item>
+    <item>
+      <title>No media</title>
+      <guid isPermaLink="false">media-2</guid>
+    </item>
+  </channel>
+</rss>
