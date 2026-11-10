@@ -1,8 +1,7 @@
 # Parity testing
 
-- Tools that generate reference output live in the sibling repo `../mariner-playground`, never here.
-- They read this repo's fixtures and write neutral JSON to `outputs/<tool>/`, which is gitignored and never tracked.
-- Parity tests skip when `outputs/` is missing, so a fresh clone still passes `cargo test`.
+- Reference output lives in `outputs/` (gitignored, never tracked). Tools that produce it never live in this repo.
+- Parity tests skip when their reference output is missing, so a fresh clone still passes `cargo test`.
 
 # Workflow
 
