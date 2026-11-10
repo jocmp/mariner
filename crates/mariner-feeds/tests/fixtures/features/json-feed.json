@@ -1,0 +1,44 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "A JSON Feed",
+  "home_page_url": "https://example.org/",
+  "feed_url": "https://example.org/feed.json",
+  "description": "Items in JSON",
+  "icon": "https://example.org/icon.png",
+  "favicon": "https://example.org/favicon.ico",
+  "language": "en",
+  "author": {"name": "Feed Author"},
+  "hubs": [{"type": "WebSub", "url": "https://hub.example.org/"}],
+  "items": [
+    {
+      "id": "  1  ",
+      "url": "  https://example.org/1  ",
+      "title": "  First  ",
+      "content_html": "<p>HTML</p>",
+      "content_text": "Text",
+      "summary": "Short",
+      "image": "https://example.org/1.png",
+      "date_published": "2024-10-05T10:11:12+02:00",
+      "date_modified": "2024-10-06T00:00:00Z",
+      "author": {"name": "Item Author"},
+      "tags": [" a ", "", "b"],
+      "attachments": [
+        {"url": "https://example.org/1.mp3", "mime_type": "audio/mpeg", "size_in_bytes": 1234},
+        {"url": "https://example.org/1.ogg", "mime_type": "audio/ogg"}
+      ]
+    },
+    {
+      "id": 2,
+      "external_url": "https://elsewhere.example.org/2",
+      "content_text": "Only text",
+      "date_published": "Sat, 05 Oct 2024 10:11:12 GMT"
+    },
+    {
+      "id": "3",
+      "url": "https://example.org/3",
+      "title": "Bad date",
+      "content_html": "",
+      "date_published": "not a date"
+    }
+  ]
+}

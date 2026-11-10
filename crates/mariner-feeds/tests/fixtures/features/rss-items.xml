@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:a10="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Items &amp; Things</title>
+    <link>https://example.org/</link>
+    <description>Every way an item can be written</description>
+    <language>en-us</language>
+    <atom:link rel="hub" href="https://hub.example.org/"/>
+    <atom:link rel="self" href="https://example.org/feed.xml"/>
+    <image>
+      <url>https://example.org/logo.png</url>
+      <title>Logo title</title>
+      <link>https://example.org/about</link>
+    </image>
+    <textInput><title>Search</title><link>https://example.org/search</link></textInput>
+    <item>
+      <title/>
+      <title>Second title is ignored</title>
+      <guid isPermaLink="false">  item-1  </guid>
+      <pubDate>Sat, 05 Oct 2024 10:11:12 GMT</pubDate>
+      <dc:date>2024-10-04T09:00:00Z</dc:date>
+      <dcterms:modified>2024-10-06T00:00:00Z</dcterms:modified>
+      <description>Summary &lt;b&gt;escaped&lt;/b&gt; and <b>raw</b> markup</description>
+      <content:encoded><![CDATA[<p>Full <em>content</em> &amp; more</p>]]></content:encoded>
+      <category> spaced </category>
+      <category></category>
+      <category>   </category>
+      <category>plain</category>
+      <dc:creator>A. Writer</dc:creator>
+      <author>writer@example.org</author>
+      <enclosure url="https://example.org/a.mp3" type="audio/mpeg" length="123"/>
+      <media:content url="https://example.org/media.jpg" medium="image"/>
+    </item>
+    <item>
+      <title>  Guid as permalink  </title>
+      <guid>https://example.org/posts/2</guid>
+      <pubDate>Friday, January 12, 2024 03:45 PM</pubDate>
+      <media:thumbnail url="https://example.org/thumb.jpg"/>
+      <enclosure url="https://example.org/photo.jpg" type="image/jpeg"/>
+    </item>
+    <item>
+      <title>No guid, dated by modification only</title>
+      <link>  https://example.org/posts/3  </link>
+      <a10:updated>2024-10-07T12:00:00+02:00</a10:updated>
+      <a10:updated>2024-10-08T12:00:00+02:00</a10:updated>
+    </item>
+    <item>
+      <a10:link href="https://example.org/posts/4"/>
+      <a10:content type="html">&lt;p&gt;A10 content&lt;/p&gt;</a10:content>
+      <a10:name>A10 Author</a10:name>
+      <guid>tag:example.org,2024:4</guid>
+      <content>Plain content element</content>
+    </item>
+    <item>
+      <description>Untitled, undated, unidentified</description>
+    </item>
+    <item>
+      <title>Nested &lt;i&gt;markup&lt;/i&gt; &#8217; &#x2014;</title>
+      <guid isPermaLink="false"></guid>
+      <link>https://example.org/posts/6?a=1&amp;b=2</link>
+      <pubDate>not a date</pubDate>
+      <issued>2023-01-02</issued>
+    </item>
+  </channel>
+</rss>

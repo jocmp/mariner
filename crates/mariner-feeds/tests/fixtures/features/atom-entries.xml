@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en">
+  <title type="text">Atom &amp; Entries</title>
+  <subtitle>Every way an entry can be written</subtitle>
+  <icon>https://example.org/icon.png</icon>
+  <link rel="self" href="https://example.org/atom.xml"/>
+  <link rel="hub" href="https://hub.example.org/"/>
+  <link rel="alternate" href="https://example.org/"/>
+  <link rel="related" href="https://example.org/related"/>
+  <id>urn:example:feed</id>
+  <updated>2024-10-05T10:11:12Z</updated>
+  <author><name>Feed Author</name></author>
+  <entry>
+    <title type="html">An &lt;em&gt;HTML&lt;/em&gt;   title &amp;amp; more</title>
+    <id> urn:example:1 </id>
+    <link rel="alternate" type="text/html" href="https://example.org/1"/>
+    <link rel="enclosure" href="https://example.org/1.mp3"/>
+    <published>2024-10-05T10:11:12+02:00</published>
+    <created>2024-10-01T00:00:00Z</created>
+    <updated>2024-10-06T00:00:00Z</updated>
+    <modified>2024-10-07T00:00:00Z</modified>
+    <author><name>First</name></author>
+    <contributor><name>Second</name></contributor>
+    <category term="a"/>
+    <category term=" b " label="B">text inside</category>
+    <summary>Plain summary</summary>
+    <content type="html">&lt;p&gt;HTML content&lt;/p&gt;</content>
+    <media:thumbnail url="https://example.org/thumb.jpg"/>
+  </entry>
+  <entry>
+    <title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">An <b>XHTML</b> title</div></title>
+    <id>urn:example:2</id>
+    <link href="https://example.org/2/first"/>
+    <link rel="alternate" href="https://example.org/2/second"/>
+    <updated>2024-10-05T10:11:12Z</updated>
+    <content type="xhtml">
+      <div xmlns="http://www.w3.org/1999/xhtml">
+        <p>Para with <a href="https://example.org/a b/ü?x=1&amp;y=[2]" title="it's">link</a> and “quotes”.</p>
+        <ul><li>one</li><li>two <b>bold</b></li></ul>
+        <br/><img src="x.png" alt="a &quot;quote&quot; &amp; &lt;"/><hr/>
+        <input type="checkbox" checked="checked"/><span/>
+        <table><tr><td>cell</td></tr></table>
+        <div><p>nested</p><p>blocks</p></div>
+        <pre>  keep   spaces </pre>
+        <script>if (a &lt; b) {}</script>
+        <!-- a comment -->
+        <figure><img src="y.png"/><figcaption>cap</figcaption></figure>
+      </div>
+    </content>
+  </entry>
+  <entry>
+    <title>Untyped title</title>
+    <id>urn:example:3</id>
+    <link rel="alternate" type="text/html" href="https://example.org/3"/>
+    <issued>2024-01-01T00:00:00Z</issued>
+    <summary type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">Summary <i>xhtml</i></div></summary>
+    <media:content url="https://example.org/media.mp4"/>
+    <content>Second content</content>
+  </entry>
+</feed>

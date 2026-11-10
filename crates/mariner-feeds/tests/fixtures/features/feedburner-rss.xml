@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:feedburner="http://rssnamespace.org/feedburner/ext/1.0" xmlns:atom10="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Burned RSS</title>
+    <link>https://example.org/</link>
+    <description>Via FeedBurner</description>
+    <language>en</language>
+    <atom10:link rel="hub" href="https://pubsubhubbub.appspot.com/"/>
+    <image><url>https://example.org/logo.png</url></image>
+    <item>
+      <title>Burned item</title>
+      <link>https://feedproxy.google.com/~r/example/1</link>
+      <feedburner:origLink>https://example.org/1</feedburner:origLink>
+      <guid isPermaLink="false">burned-1</guid>
+      <pubDate>Sat, 05 Oct 2024 10:11:12 -0400</pubDate>
+      <enclosure url="https://example.org/1.jpg" type="image/jpeg"/>
+    </item>
+  </channel>
+</rss>

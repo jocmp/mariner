@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Stops at an undefined entity</title>
+    <link>https://example.org/</link>
+    <item>
+      <title>Kept</title>
+      <link>https://example.org/1</link>
+    </item>
+    <item>
+      <title>Lost&nbsp;here</title>
+      <link>https://example.org/2</link>
+    </item>
+    <item>
+      <title>Never reached</title>
+    </item>
+  </channel>
+</rss>
