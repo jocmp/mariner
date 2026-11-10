@@ -10,13 +10,20 @@ pub(crate) struct Decoded {
 }
 
 /// Decodes by byte order mark, then the XML declaration's encoding, then
-/// UTF-8. Bytes invalid in the chosen encoding become U+FFFD.
-pub(crate) fn decode(bytes: &[u8]) -> Decoded {
+/// the `charset` hint, then UTF-8. Bytes invalid in the chosen encoding
+/// become U+FFFD.
+pub(crate) fn decode(bytes: &[u8], charset: Option<&str>) -> Decoded {
     let declared = declared_encoding(bytes);
     let declared_encoding = declared.is_some();
     let encoding = Encoding::for_bom(bytes)
         .map(|(encoding, _)| encoding)
         .or_else(|| declared.and_then(|label| Encoding::for_label(label.as_bytes())))
+        .or_else(|| {
+            if declared_encoding {
+                return None;
+            }
+            charset.and_then(|label| Encoding::for_label(label.trim().as_bytes()))
+        })
         .unwrap_or(UTF_8);
     // A declaration that claims UTF-16 in a document read as bytes without
     // a BOM is wrong about itself; ASCII-compatible decoding still works.

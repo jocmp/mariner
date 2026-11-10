@@ -21,7 +21,14 @@ pub enum Error {
 /// Parses a feed document from its raw bytes. XML documents are decoded by
 /// their byte order mark or declared encoding, falling back to UTF-8.
 pub fn parse(bytes: &[u8]) -> Result<Feed, Error> {
-    let decoded = decode::decode(bytes);
+    parse_with_charset(bytes, None)
+}
+
+/// Like [`parse`], with a charset from outside the document (an HTTP
+/// `Content-Type` header, say). The hint applies only when the document
+/// has no byte order mark and declares no encoding of its own.
+pub fn parse_with_charset(bytes: &[u8], charset: Option<&str>) -> Result<Feed, Error> {
+    let decoded = decode::decode(bytes, charset);
     let text = decoded.text.trim_start();
     if let Some(flavor) = rules::detect(text) {
         return Ok(sax::parse(text, flavor, decoded.declared_encoding));
