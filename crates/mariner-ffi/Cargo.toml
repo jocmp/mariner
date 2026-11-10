@@ -1,0 +1,15 @@
+[package]
+name = "mariner-ffi"
+description = "UniFFI bindings exposing Mariner to iOS and Android."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mariner-core = { path = "../mariner-core" }
+mariner-condense = { path = "../mariner-condense" }
+
+[lints]
+workspace = true

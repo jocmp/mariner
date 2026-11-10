@@ -1,0 +1,11 @@
+[package]
+name = "mariner-condense"
+description = "Converts article HTML into typed content blocks for native UIs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

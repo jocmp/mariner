@@ -1,0 +1,6 @@
+/target
+/outputs
+.env
+*.db
+*.db-*
+.DS_Store

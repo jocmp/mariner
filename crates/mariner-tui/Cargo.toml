@@ -1,0 +1,15 @@
+[package]
+name = "mariner-tui"
+description = "Mariner's terminal UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mariner-core = { path = "../mariner-core" }
+mariner-condense = { path = "../mariner-condense" }
+
+[lints]
+workspace = true
