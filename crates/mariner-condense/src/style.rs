@@ -9,20 +9,17 @@ pub(crate) fn is_hidden(node: &NodeRef) -> bool {
     })
 }
 
-/// Inline `font-weight: bold` (or `bolder`, or 600 and up).
+/// Inline `font-weight: bold`, exactly.
 pub(crate) fn is_bold(node: &NodeRef) -> bool {
-    declarations(node).any(|(property, value)| {
-        let value = value.to_ascii_lowercase();
-        property == "font-weight"
-            && (value.starts_with("bold") || value.parse::<u32>().is_ok_and(|weight| weight >= 600))
-    })
+    declarations(node)
+        .any(|(property, value)| property == "font-weight" && value.eq_ignore_ascii_case("bold"))
 }
 
-/// Inline `font-style: italic` or `oblique`.
+/// Inline `font-style: italic` or `oblique`, exactly.
 pub(crate) fn is_italic(node: &NodeRef) -> bool {
     declarations(node).any(|(property, value)| {
-        let value = value.to_ascii_lowercase();
-        property == "font-style" && (value.starts_with("italic") || value.starts_with("oblique"))
+        property == "font-style"
+            && (value.eq_ignore_ascii_case("italic") || value.eq_ignore_ascii_case("oblique"))
     })
 }
 

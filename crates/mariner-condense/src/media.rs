@@ -4,17 +4,11 @@ use dom_query::NodeRef;
 use url::Url;
 
 use crate::model::{AudioSource, Ids, ImageSource, TextBlock, TextKind, VideoSource};
+use crate::style;
 
-/// Attributes lazy-loading scripts use for the real image URL.
-const LAZY_SRC_ATTRS: [&str; 5] = [
-    "data-src",
-    "data-lazy-src",
-    "data-original",
-    "data-hi-res-src",
-    "data-url",
-];
-
-const SRCSET_ATTRS: [&str; 3] = ["srcset", "data-srcset", "data-lazy-srcset"];
+/// Size of the YouTube thumbnail, used when an embed doesn't give one.
+const YOUTUBE_WIDTH: u32 = 480;
+const YOUTUBE_HEIGHT: u32 = 360;
 
 /// Resolves `raw` against `base`, falling back to the raw value when it
 /// can't be resolved. Empty values give `None`.
@@ -34,63 +28,38 @@ pub(crate) fn resolve(base: Option<&Url>, raw: &str) -> Option<String> {
     )
 }
 
-/// Candidate sources for an `<img>`: `src` (unless it's a placeholder for a
-/// lazy-load attribute), lazy-load attributes, then `srcset` entries.
-pub(crate) fn img_sources(node: &NodeRef, base: Option<&Url>) -> Vec<ImageSource> {
-    let width = dimension(node, "width");
-    let height = dimension(node, "height");
-    let lazy: Vec<String> = LAZY_SRC_ATTRS
-        .iter()
-        .filter_map(|name| node.attr(name).map(|value| value.to_string()))
-        .collect();
-
-    let mut urls = Vec::new();
-    if let Some(src) = node.attr("src") {
-        let placeholder = src.trim().starts_with("data:") && !lazy.is_empty();
-        if !placeholder {
-            urls.push(src.to_string());
-        }
+/// Like [`resolve`], except an empty `href` links to the base URL itself.
+pub(crate) fn resolve_link(base: Option<&Url>, href: &str) -> Option<String> {
+    if href.trim().is_empty() {
+        return base.map(|base| base.to_string());
     }
-    urls.extend(lazy);
+    resolve(base, href)
+}
 
-    let mut sources: Vec<ImageSource> = urls
-        .iter()
-        .filter_map(|raw| resolve(base, raw))
-        .map(|url| ImageSource {
+/// Candidate sources for an `<img>`, in order: `srcset` entries, `data-src`,
+/// `src`, then an inline `background-image`.
+pub(crate) fn img_sources(node: &NodeRef, base: Option<&Url>) -> Vec<ImageSource> {
+    let mut sources = node
+        .attr("srcset")
+        .map(|srcset| srcset_sources(&srcset, base))
+        .unwrap_or_default();
+
+    let (width, height) = dimensions(node);
+    let attributes = ["data-src", "src"]
+        .into_iter()
+        .filter_map(|name| node.attr(name))
+        .filter_map(|raw| resolve(base, &raw));
+    let background = style::background_image(node).and_then(|raw| resolve(base, &raw));
+    for url in attributes.chain(background) {
+        sources.push(ImageSource {
             url,
             width,
             height,
             srcset_width: None,
             density: None,
-        })
-        .collect();
-    for name in SRCSET_ATTRS {
-        if let Some(srcset) = node.attr(name) {
-            sources.extend(srcset_sources(&srcset, base));
-        }
+        });
     }
     dedupe(sources)
-}
-
-/// Sources from a `<picture>`'s `<source srcset>` children.
-pub(crate) fn picture_sources(picture: &NodeRef, base: Option<&Url>) -> Vec<ImageSource> {
-    picture
-        .element_children()
-        .iter()
-        .filter(|child| child.node_name().as_deref() == Some("source"))
-        .filter_map(|source| source.attr("srcset"))
-        .flat_map(|srcset| srcset_sources(&srcset, base))
-        .collect()
-}
-
-pub(crate) fn background_source(url: &str, base: Option<&Url>) -> Option<ImageSource> {
-    Some(ImageSource {
-        url: resolve(base, url)?,
-        width: None,
-        height: None,
-        srcset_width: None,
-        density: None,
-    })
 }
 
 pub(crate) fn dedupe(sources: Vec<ImageSource>) -> Vec<ImageSource> {
@@ -114,18 +83,21 @@ pub(crate) fn alt_caption(node: &NodeRef) -> Option<TextBlock> {
     })
 }
 
-/// `<video src>` and its `<source>` children.
+/// `<video src>` and its `<source>` children. Each source links to itself.
 pub(crate) fn video_sources(node: &NodeRef, base: Option<&Url>) -> Vec<VideoSource> {
     let thumbnail = node
         .attr("poster")
         .and_then(|poster| resolve(base, &poster));
-    let width = dimension(node, "width");
-    let height = dimension(node, "height");
-    media_urls(node, base)
-        .into_iter()
+    let (width, height) = dimensions(node);
+    let own = node
+        .attr("src")
+        .and_then(|src| resolve(base, &src))
+        .map(|url| (url, mime_type(node)));
+    own.into_iter()
+        .chain(source_urls(node, base))
         .map(|(url, mime_type)| VideoSource {
+            link: Some(url.clone()),
             url,
-            link: None,
             thumbnail: thumbnail.clone(),
             width,
             height,
@@ -134,23 +106,50 @@ pub(crate) fn video_sources(node: &NodeRef, base: Option<&Url>) -> Vec<VideoSour
         .collect()
 }
 
-/// `<audio src>` and its `<source>` children.
+/// An `<audio>`'s `<source>` children.
 pub(crate) fn audio_sources(node: &NodeRef, base: Option<&Url>) -> Vec<AudioSource> {
-    media_urls(node, base)
+    source_urls(node, base)
         .into_iter()
         .map(|(url, mime_type)| AudioSource { url, mime_type })
         .collect()
 }
 
 /// A YouTube embed or watch URL as a video with a thumbnail and watch link.
-pub(crate) fn youtube(src: &str, base: Option<&Url>) -> Option<VideoSource> {
+/// The source keeps the iframe's URL; size comes from the iframe or
+/// defaults to the thumbnail's.
+pub(crate) fn youtube(src: &str, iframe: &NodeRef, base: Option<&Url>) -> Option<VideoSource> {
     let src = src.trim();
     let resolved = if src.starts_with("//") {
         format!("https:{src}")
     } else {
         resolve(base, src)?
     };
-    let url = Url::parse(&resolved).ok()?;
+    let id = youtube_id(&Url::parse(&resolved).ok()?)?;
+
+    Some(VideoSource {
+        url: resolved,
+        link: Some(format!("https://www.youtube.com/watch?v={id}")),
+        thumbnail: Some(format!("https://img.youtube.com/vi/{id}/hqdefault.jpg")),
+        width: Some(dimension(iframe, "width").unwrap_or(YOUTUBE_WIDTH)),
+        height: Some(dimension(iframe, "height").unwrap_or(YOUTUBE_HEIGHT)),
+        mime_type: None,
+    })
+}
+
+/// `width` and `height` attributes, only when both are plain integers.
+pub(crate) fn dimensions(node: &NodeRef) -> (Option<u32>, Option<u32>) {
+    match (dimension(node, "width"), dimension(node, "height")) {
+        (Some(width), Some(height)) => (Some(width), Some(height)),
+        _ => (None, None),
+    }
+}
+
+/// A single plain-integer `width` or `height` attribute.
+pub(crate) fn dimension(node: &NodeRef, name: &str) -> Option<u32> {
+    node.attr(name)?.trim().parse().ok()
+}
+
+fn youtube_id(url: &Url) -> Option<String> {
     let host = url.host_str()?;
     let host = host.strip_prefix("www.").unwrap_or(host);
     let host = host.strip_prefix("m.").unwrap_or(host);
@@ -168,32 +167,11 @@ pub(crate) fn youtube(src: &str, base: Option<&Url>) -> Option<VideoSource> {
         "youtu.be" => segments.first().map(|id| id.to_string()),
         _ => None,
     }?;
-    if id.len() < 6
-        || !id
+    let valid = id.len() >= 6
+        && id
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return None;
-    }
-
-    Some(VideoSource {
-        url: format!("https://www.youtube.com/embed/{id}"),
-        link: Some(format!("https://www.youtube.com/watch?v={id}")),
-        thumbnail: Some(format!("https://img.youtube.com/vi/{id}/hqdefault.jpg")),
-        width: None,
-        height: None,
-        mime_type: None,
-    })
-}
-
-pub(crate) fn dimension(node: &NodeRef, name: &str) -> Option<u32> {
-    let value = node.attr(name)?;
-    let digits: String = value
-        .trim()
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    digits.parse().ok().filter(|&n| n > 0)
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    valid.then_some(id)
 }
 
 fn srcset_sources(srcset: &str, base: Option<&Url>) -> Vec<ImageSource> {
@@ -261,22 +239,17 @@ fn parse_srcset(srcset: &str) -> Vec<SrcsetCandidate> {
     candidates
 }
 
-fn media_urls(node: &NodeRef, base: Option<&Url>) -> Vec<(String, Option<String>)> {
-    let mut urls = Vec::new();
-    if let Some(url) = node.attr("src").and_then(|src| resolve(base, &src)) {
-        urls.push((url, mime_type(node)));
-    }
-    for source in node.element_children() {
-        if source.node_name().as_deref() != Some("source") {
-            continue;
-        }
-        if let Some(url) = source.attr("src").and_then(|src| resolve(base, &src)) {
-            urls.push((url, mime_type(&source)));
-        }
-    }
+/// `<source src>` children, without duplicates.
+fn source_urls(node: &NodeRef, base: Option<&Url>) -> Vec<(String, Option<String>)> {
     let mut seen = std::collections::HashSet::new();
-    urls.retain(|(url, _)| seen.insert(url.clone()));
-    urls
+    node.element_children()
+        .into_iter()
+        .filter(|child| child.node_name().as_deref() == Some("source"))
+        .filter_map(|source| {
+            let url = resolve(base, &source.attr("src")?)?;
+            seen.insert(url.clone()).then(|| (url, mime_type(&source)))
+        })
+        .collect()
 }
 
 fn mime_type(node: &NodeRef) -> Option<String> {

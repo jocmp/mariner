@@ -78,11 +78,8 @@ impl TextBuilder {
         self.text.push_str(text);
     }
 
-    /// A `<br>`: a line break within the current block.
+    /// A `<br>`: a line break within the current block, even at its start.
     pub(crate) fn line_break(&mut self) {
-        if self.text.is_empty() {
-            return;
-        }
         let trimmed = self.text.trim_end_matches(' ').len();
         self.text.truncate(trimmed);
         self.text.push('\n');
@@ -126,6 +123,7 @@ impl TextBuilder {
     }
 }
 
+/// Whitespace that collapses in prose. Non-breaking spaces collapse too.
 pub(crate) fn is_html_whitespace(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{0C}')
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{0C}' | '\u{A0}')
 }

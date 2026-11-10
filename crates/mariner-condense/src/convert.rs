@@ -4,44 +4,40 @@ use dom_query::NodeRef;
 use url::Url;
 
 use crate::model::{
-    ArticleDocument, AudioBlock, Block, CellKind, Ids, ImageBlock, ImageSource, ListItemBlock,
-    QuoteBlock, Style, TextBlock, TextKind, Truncation, VideoBlock,
+    ArticleDocument, AudioBlock, Block, CellKind, Ids, ImageBlock, ListItemBlock, QuoteBlock,
+    Style, TextBlock, TextKind, Truncation, VideoBlock,
 };
 use crate::table::{GridBuilder, TableOutput};
 use crate::text::TextBuilder;
 use crate::{Condenser, media, style};
 
-/// Elements whose content is never shown.
-const DROPPED: [&str; 22] = [
-    "area", "button", "canvas", "embed", "head", "input", "link", "map", "math", "meta",
-    "noscript", "object", "option", "param", "rp", "rt", "script", "select", "style", "svg",
-    "template", "textarea",
-];
-
-/// Containers that separate text but don't become blocks themselves.
-const BOUNDARIES: [&str; 22] = [
-    "address",
-    "article",
-    "aside",
-    "center",
-    "dd",
-    "details",
-    "dialog",
-    "div",
-    "dl",
-    "dt",
-    "fieldset",
+/// Elements whose content is never shown. A `<figcaption>` is read by its
+/// figure; anywhere else it's dropped.
+const DROPPED: [&str; 24] = [
+    "area",
+    "button",
+    "canvas",
+    "caption",
+    "embed",
     "figcaption",
-    "footer",
-    "form",
-    "header",
-    "hgroup",
-    "hr",
-    "main",
-    "nav",
-    "p",
-    "section",
-    "summary",
+    "head",
+    "input",
+    "link",
+    "map",
+    "math",
+    "meta",
+    "noscript",
+    "object",
+    "option",
+    "param",
+    "rp",
+    "rt",
+    "script",
+    "select",
+    "style",
+    "svg",
+    "template",
+    "textarea",
 ];
 
 pub(crate) fn convert(root: &NodeRef, base: Option<&Url>, limits: &Condenser) -> ArticleDocument {
@@ -60,10 +56,9 @@ struct Converter<'a> {
     pending_ids: Vec<String>,
     /// Resolved `href`s of the links enclosing the current node.
     links: Vec<String>,
-    /// One entry per enclosing `<figure>`: its caption until an image uses it.
-    captions: Vec<Option<TextBlock>>,
-    /// `<source srcset>` candidates from the enclosing `<picture>`.
-    picture_sources: Vec<ImageSource>,
+    /// Walking a figure's content for its caption: media and nested
+    /// figures are skipped, and its figcaption is read.
+    figure_content: bool,
     pre_depth: usize,
     block_count: usize,
     char_count: usize,
@@ -81,16 +76,6 @@ enum ContainerKind {
     },
     /// Collects blocks for a table cell or caption, then hands them back.
     Capture,
-}
-
-impl ContainerKind {
-    /// The kind to reopen after splitting this container around media.
-    fn continuation(&self) -> Self {
-        match self {
-            ContainerKind::ListItem { .. } => ContainerKind::ListItem { number: None },
-            other => other.clone(),
-        }
-    }
 }
 
 struct Container {
@@ -112,8 +97,7 @@ impl<'a> Converter<'a> {
             }],
             pending_ids: Vec::new(),
             links: Vec::new(),
-            captions: Vec::new(),
-            picture_sources: Vec::new(),
+            figure_content: false,
             pre_depth: 0,
             block_count: 0,
             char_count: 0,
@@ -158,13 +142,18 @@ impl<'a> Converter<'a> {
             return;
         }
         let name = element_name(node);
-        if DROPPED.contains(&name.as_str()) || style::is_hidden(node) {
+        if style::is_hidden(node) {
             return;
         }
-        if let Some(source) =
-            style::background_image(node).and_then(|url| media::background_source(&url, self.base))
-        {
-            self.emit_image(vec![source], None, Ids::new());
+        if self.figure_content {
+            match name.as_str() {
+                "figcaption" => return self.walk_inline(node, &name),
+                "figure" | "img" | "picture" | "video" | "audio" | "iframe" => return,
+                _ => {}
+            }
+        }
+        if DROPPED.contains(&name.as_str()) {
+            return;
         }
 
         match name.as_str() {
@@ -172,23 +161,21 @@ impl<'a> Converter<'a> {
                 self.note_id(node);
                 self.text.line_break();
             }
+            "p" => self.walk_paragraph(node),
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => self.walk_heading(node, &name),
             "pre" => self.walk_pre(node),
             "ul" | "menu" => self.walk_list(node, false),
             "ol" => self.walk_list(node, true),
-            "li" => self.walk_list_item(node, None),
             "blockquote" => self.walk_quote(node),
             "figure" => self.walk_figure(node),
-            // A figure captures its own caption; a stray one is plain text.
-            "figcaption" if !self.captions.is_empty() => {}
-            "picture" => self.walk_picture(node),
             "img" => self.walk_img(node),
             "video" => self.walk_video(node),
             "audio" => self.walk_audio(node),
             "iframe" => self.walk_iframe(node),
             "table" => self.walk_table(node),
             "source" | "track" => {}
-            _ if BOUNDARIES.contains(&name.as_str()) => self.walk_boundary(node),
+            // Other containers (div, section, li outside a list, ...) flow
+            // into the surrounding text.
             _ => self.walk_inline(node, &name),
         }
     }
@@ -202,7 +189,7 @@ impl<'a> Converter<'a> {
         }
     }
 
-    fn walk_boundary(&mut self, node: &NodeRef) {
+    fn walk_paragraph(&mut self, node: &NodeRef) {
         self.flush_text();
         self.note_id(node);
         self.walk_children(node);
@@ -222,7 +209,7 @@ impl<'a> Converter<'a> {
     fn walk_pre(&mut self, node: &NodeRef) {
         self.flush_text();
         self.note_id(node);
-        let kind = if is_code_block(node) {
+        let kind = if has_code_child(node) {
             TextKind::Code
         } else {
             TextKind::Preformatted
@@ -240,8 +227,8 @@ impl<'a> Converter<'a> {
         let link = (name == "a")
             .then(|| node.attr("href"))
             .flatten()
-            .and_then(|href| media::resolve(self.base, &href));
-        let styles = self.inline_styles(node, name, link.as_deref());
+            .and_then(|href| media::resolve_link(self.base, &href));
+        let styles = inline_styles(node, name, link.as_deref());
         let handles: Vec<usize> = styles
             .into_iter()
             .map(|style| self.text.push_style(style))
@@ -260,137 +247,94 @@ impl<'a> Converter<'a> {
         }
     }
 
-    fn inline_styles(&self, node: &NodeRef, name: &str, link: Option<&str>) -> Vec<Style> {
-        let mut styles = Vec::new();
-        match name {
-            "b" | "strong" => styles.push(Style::Bold),
-            "i" | "em" | "cite" | "dfn" | "var" => styles.push(Style::Italic),
-            "u" | "ins" => styles.push(Style::Underline),
-            "s" | "strike" | "del" => styles.push(Style::Strikethrough),
-            "sup" => styles.push(Style::Superscript),
-            "sub" => styles.push(Style::Subscript),
-            "tt" | "kbd" | "samp" => styles.push(Style::Monospace),
-            "code" if self.pre_depth == 0 => styles.push(Style::Code),
-            "font" => {
-                if let Some(face) = node.attr("face").filter(|face| !face.trim().is_empty()) {
-                    styles.push(Style::Font {
-                        face: face.trim().to_string(),
-                    });
-                }
-            }
-            "span" => {
-                if style::is_bold(node) {
-                    styles.push(Style::Bold);
-                }
-                if style::is_italic(node) {
-                    styles.push(Style::Italic);
-                }
-            }
-            _ => {}
-        }
-        if let Some(url) = link {
-            styles.push(Style::Link {
-                url: url.to_string(),
-            });
-        }
-        styles
-    }
-
+    /// Only `<li>` children count; anything else directly inside a list is
+    /// dropped. Ordered items are numbered by position.
     fn walk_list(&mut self, node: &NodeRef, ordered: bool) {
         self.flush_text();
         self.note_id(node);
         let items = node
             .element_children()
-            .iter()
-            .filter(|child| element_name(child) == "li")
-            .count();
-        let reversed = ordered && node.has_attr("reversed");
-        let mut number =
-            parse_int(node, "start").unwrap_or(if reversed { items as i32 } else { 1 });
-
-        for child in node.children_it(false) {
+            .into_iter()
+            .filter(|child| element_name(child) == "li");
+        for (index, item) in items.enumerate() {
             if self.stopped {
                 break;
             }
-            if child.is_element() && element_name(&child) == "li" {
-                let item_number = ordered.then(|| {
-                    if let Some(value) = parse_int(&child, "value") {
-                        number = value;
-                    }
-                    number
-                });
-                self.walk_list_item(&child, item_number);
-                number = if reversed { number - 1 } else { number + 1 };
-            } else {
-                self.walk(&child);
-            }
+            let number = ordered.then(|| i32::try_from(index + 1).unwrap_or(i32::MAX));
+            self.open(ContainerKind::ListItem { number }, &item);
+            self.walk_children(&item);
+            self.close_container();
         }
-        self.flush_text();
-    }
-
-    fn walk_list_item(&mut self, node: &NodeRef, number: Option<i32>) {
-        self.open(ContainerKind::ListItem { number }, node);
-        self.walk_children(node);
-        self.close_container();
     }
 
     fn walk_quote(&mut self, node: &NodeRef) {
         let cite = node
             .attr("cite")
-            .and_then(|cite| media::resolve(self.base, &cite));
+            .map(|cite| cite.trim().to_string())
+            .filter(|cite| !cite.is_empty());
         self.open(ContainerKind::Quote { cite }, node);
         self.walk_children(node);
         self.close_container();
     }
 
+    /// A figure is a single image built from every image inside it. Its
+    /// caption is the first text in the figure's other content, figcaption
+    /// included; alt text isn't used. Without images, a YouTube embed inside
+    /// becomes a video; otherwise the figure is dropped.
     fn walk_figure(&mut self, node: &NodeRef) {
         self.flush_text();
-        self.note_id(node);
-        let caption = figure_caption(node).and_then(|caption| self.capture_caption(&caption));
-        self.captions.push(caption);
-        self.walk_children(node);
-        let unused = self.captions.pop().flatten();
-        self.flush_text();
-
-        // The figure's image may sit just before the figure element.
-        if let Some(caption) = unused {
-            match self.top().blocks.last_mut() {
-                Some(Block::Image(image)) => image.caption = Some(caption),
-                _ => self.place_text(caption),
-            }
-        }
-    }
-
-    fn walk_picture(&mut self, node: &NodeRef) {
-        let outer = std::mem::replace(
-            &mut self.picture_sources,
-            media::picture_sources(node, self.base),
+        let images: Vec<NodeRef> = node
+            .descendants_it()
+            .filter(|child| child.is_element() && element_name(child) == "img")
+            .collect();
+        let sources = media::dedupe(
+            images
+                .iter()
+                .flat_map(|image| media::img_sources(image, self.base))
+                .collect(),
         );
-        self.walk_children(node);
-        // A picture with sources but no <img> is still an image.
-        let unused = std::mem::replace(&mut self.picture_sources, outer);
-        if !unused.is_empty() {
-            self.flush_text();
-            let ids = self.take_ids(node);
-            self.emit_image(media::dedupe(unused), None, ids);
+
+        if sources.is_empty() {
+            let embed = node
+                .descendants_it()
+                .find(|child| child.is_element() && element_name(child) == "iframe");
+            match embed {
+                Some(iframe) => {
+                    self.note_id(node);
+                    self.walk_iframe(&iframe);
+                }
+                None => self.note_descendant_ids(node),
+            }
+            return;
         }
+
+        let caption = self.capture_figure_caption(node);
+        self.note_descendant_ids(node);
+        let ids = self.drain_pending_ids();
+        let link = self.links.last().cloned();
+        self.emit_media(Block::Image(ImageBlock {
+            ids,
+            sources,
+            caption,
+            link,
+        }));
     }
 
     fn walk_img(&mut self, node: &NodeRef) {
-        let mut sources = media::img_sources(node, self.base);
-        sources.append(&mut self.picture_sources);
-        let sources = media::dedupe(sources);
+        let sources = media::img_sources(node, self.base);
         if sources.is_empty() {
             self.note_id(node);
             return;
         }
         self.flush_text();
         let ids = self.take_ids(node);
-        let caption = match self.captions.last_mut() {
-            Some(slot @ Some(_)) => slot.take(),
-            _ => media::alt_caption(node),
-        };
-        self.emit_image(sources, caption, ids);
+        let link = self.links.last().cloned();
+        self.emit_media(Block::Image(ImageBlock {
+            ids,
+            sources,
+            caption: media::alt_caption(node),
+            link,
+        }));
     }
 
     fn walk_video(&mut self, node: &NodeRef) {
@@ -417,12 +361,13 @@ impl<'a> Converter<'a> {
 
     /// Recognized video embeds become videos; other iframes are dropped.
     fn walk_iframe(&mut self, node: &NodeRef) {
-        let src = node.attr("src").or_else(|| node.attr("data-src"));
-        let Some(mut source) = src.and_then(|src| media::youtube(&src, self.base)) else {
+        let Some(source) = node
+            .attr("src")
+            .and_then(|src| media::youtube(&src, node, self.base))
+        else {
+            self.note_id(node);
             return;
         };
-        source.width = media::dimension(node, "width");
-        source.height = media::dimension(node, "height");
         self.flush_text();
         let ids = self.take_ids(node);
         self.emit_media(Block::Video(VideoBlock {
@@ -437,11 +382,6 @@ impl<'a> Converter<'a> {
         let rtl = is_rtl(node);
 
         let mut grid = GridBuilder::new();
-        for child in node.element_children() {
-            if element_name(&child) == "caption" {
-                self.walk_boundary(&child);
-            }
-        }
         for row in table_rows(node) {
             if self.stopped {
                 break;
@@ -471,29 +411,23 @@ impl<'a> Converter<'a> {
             }
             TableOutput::Flat(blocks) => {
                 for block in blocks {
-                    self.place_captured(block);
+                    self.place(block);
                 }
             }
         }
     }
 
-    /// Walks a figcaption into a single text block.
-    fn capture_caption(&mut self, node: &NodeRef) -> Option<TextBlock> {
-        let blocks = self.capture(|this| {
-            this.note_id(node);
-            this.walk_children(node);
-        });
-        let mut caption: Option<TextBlock> = None;
-        for block in blocks {
-            match block {
-                Block::Text(text) => match &mut caption {
-                    None => caption = Some(text),
-                    Some(caption) => append_line(caption, text),
-                },
-                other => self.place_captured(other),
-            }
-        }
-        caption
+    /// The first text block of a figure's content, links inside it ignored.
+    fn capture_figure_caption(&mut self, figure: &NodeRef) -> Option<TextBlock> {
+        let outer_links = std::mem::take(&mut self.links);
+        let outer_figure = std::mem::replace(&mut self.figure_content, true);
+        let blocks = self.capture(|this| this.walk_children(figure));
+        self.figure_content = outer_figure;
+        self.links = outer_links;
+        blocks.into_iter().find_map(|block| match block {
+            Block::Text(text) => Some(text),
+            _ => None,
+        })
     }
 
     /// Runs `f` with a fresh text builder and container, returning the
@@ -523,14 +457,6 @@ impl<'a> Converter<'a> {
         let leftover = std::mem::replace(&mut self.pending_ids, saved_ids);
         self.pending_ids.extend(leftover);
         blocks
-    }
-
-    /// Places a block produced by a capture, keeping quotes text-only.
-    fn place_captured(&mut self, block: Block) {
-        match block {
-            Block::Image(_) | Block::Video(_) | Block::Audio(_) => self.place_media(block),
-            other => self.place(other),
-        }
     }
 
     fn open(&mut self, kind: ContainerKind, node: &NodeRef) {
@@ -587,53 +513,34 @@ impl<'a> Converter<'a> {
         self.place(Block::Text(block));
     }
 
-    fn place_text(&mut self, block: TextBlock) {
-        let chars = block.text.chars().count();
-        if self.admit(chars) {
-            self.place(Block::Text(block));
-        }
-    }
-
-    fn emit_image(&mut self, sources: Vec<ImageSource>, caption: Option<TextBlock>, ids: Ids) {
-        let link = self.links.last().cloned();
-        self.emit_media(Block::Image(ImageBlock {
-            ids,
-            sources,
-            caption,
-            link,
-        }));
-    }
-
     fn emit_media(&mut self, block: Block) {
         self.flush_text();
         if self.admit(0) {
-            self.place_media(block);
+            self.place(block);
         }
     }
 
-    /// Places media outside any enclosing quotes, splitting them around it.
-    fn place_media(&mut self, block: Block) {
-        let mut outermost_quote = None;
-        for (index, container) in self.stack.iter().enumerate().rev() {
-            match container.kind {
-                ContainerKind::Quote { .. } => outermost_quote = Some(index),
-                ContainerKind::Root | ContainerKind::Capture => break,
-                ContainerKind::ListItem { .. } => {}
-            }
-        }
+    /// Places a block in the current container. Quotes hold text only:
+    /// anything else, nested quotes included, goes outside the outermost
+    /// enclosing quote, which is split around it.
+    fn place(&mut self, block: Block) {
+        let outermost_quote = match block {
+            Block::Text(_) => None,
+            _ => self.outermost_quote(),
+        };
         let Some(quote) = outermost_quote else {
-            self.place(block);
+            self.top().blocks.push(block);
             return;
         };
 
         let mut reopen = Vec::new();
         while self.stack.len() > quote {
             if let Some(container) = self.stack.last() {
-                reopen.push(container.kind.continuation());
+                reopen.push(container.kind.clone());
             }
             self.close_container();
         }
-        self.place(block);
+        self.top().blocks.push(block);
         for kind in reopen.into_iter().rev() {
             self.stack.push(Container {
                 kind,
@@ -643,22 +550,32 @@ impl<'a> Converter<'a> {
         }
     }
 
-    fn place(&mut self, block: Block) {
-        self.top().blocks.push(block);
+    /// When the current container is a quote, the index of the outermost
+    /// quote in the run of quotes nested directly inside each other.
+    fn outermost_quote(&self) -> Option<usize> {
+        let mut outermost = None;
+        for (index, container) in self.stack.iter().enumerate().rev() {
+            match container.kind {
+                ContainerKind::Quote { .. } => outermost = Some(index),
+                _ => break,
+            }
+        }
+        outermost
     }
 
-    /// Counts a new block with `chars` characters against the caps. Once a
-    /// cap would be exceeded, conversion stops and the block is dropped.
+    /// Counts a new block with `chars` characters against the caps. The
+    /// block that goes over a cap is dropped, conversion stops, and the
+    /// reported counts include it.
     fn admit(&mut self, chars: usize) -> bool {
-        if self.stopped
-            || self.block_count >= self.limits.max_blocks
-            || self.char_count + chars > self.limits.max_chars
-        {
-            self.stopped = true;
+        if self.stopped {
             return false;
         }
         self.block_count += 1;
         self.char_count += chars;
+        if self.block_count > self.limits.max_blocks || self.char_count > self.limits.max_chars {
+            self.stopped = true;
+            return false;
+        }
         true
     }
 
@@ -677,6 +594,16 @@ impl<'a> Converter<'a> {
         }
     }
 
+    /// Notes the IDs of `node` and every element inside it.
+    fn note_descendant_ids(&mut self, node: &NodeRef) {
+        self.note_id(node);
+        for child in node.descendants_it() {
+            if child.is_element() {
+                self.note_id(&child);
+            }
+        }
+    }
+
     fn take_ids(&mut self, node: &NodeRef) -> Ids {
         self.note_id(node);
         self.drain_pending_ids()
@@ -685,6 +612,42 @@ impl<'a> Converter<'a> {
     fn drain_pending_ids(&mut self) -> Ids {
         self.pending_ids.drain(..).collect()
     }
+}
+
+fn inline_styles(node: &NodeRef, name: &str, link: Option<&str>) -> Vec<Style> {
+    let mut styles = Vec::new();
+    match name {
+        "b" | "strong" => styles.push(Style::Bold),
+        "i" | "em" | "cite" | "dfn" => styles.push(Style::Italic),
+        "u" => styles.push(Style::Underline),
+        "s" => styles.push(Style::Strikethrough),
+        "sup" => styles.push(Style::Superscript),
+        "sub" => styles.push(Style::Subscript),
+        "tt" => styles.push(Style::Monospace),
+        "code" => styles.push(Style::Code),
+        "font" => {
+            if let Some(face) = node.attr("face").filter(|face| !face.trim().is_empty()) {
+                styles.push(Style::Font {
+                    face: face.trim().to_string(),
+                });
+            }
+        }
+        "span" => {
+            if style::is_bold(node) {
+                styles.push(Style::Bold);
+            }
+            if style::is_italic(node) {
+                styles.push(Style::Italic);
+            }
+        }
+        _ => {}
+    }
+    if let Some(url) = link {
+        styles.push(Style::Link {
+            url: url.to_string(),
+        });
+    }
+    styles
 }
 
 fn element_name(node: &NodeRef) -> String {
@@ -697,20 +660,10 @@ fn parse_int(node: &NodeRef, name: &str) -> Option<i32> {
     node.attr(name)?.trim().parse().ok()
 }
 
-/// `<pre>` whose only content is a single `<code>`.
-fn is_code_block(pre: &NodeRef) -> bool {
-    let mut code = false;
-    for child in pre.children_it(false) {
-        if child.is_element() {
-            if code || element_name(&child) != "code" {
-                return false;
-            }
-            code = true;
-        } else if child.is_text() && !child.text().trim().is_empty() {
-            return false;
-        }
-    }
-    code
+fn has_code_child(pre: &NodeRef) -> bool {
+    pre.element_children()
+        .iter()
+        .any(|child| element_name(child) == "code")
 }
 
 /// The nearest `dir` attribute on the table or its ancestors decides.
@@ -719,18 +672,6 @@ fn is_rtl(table: &NodeRef) -> bool {
         .chain(table.ancestors_it(None))
         .find_map(|node| node.attr("dir"))
         .is_some_and(|dir| dir.trim().eq_ignore_ascii_case("rtl"))
-}
-
-/// The figure's own figcaption, not one belonging to a nested figure.
-fn figure_caption<'a>(figure: &NodeRef<'a>) -> Option<NodeRef<'a>> {
-    figure.descendants_it().find(|node| {
-        node.is_element()
-            && element_name(node) == "figcaption"
-            && node
-                .ancestors_it(None)
-                .find(|ancestor| element_name(ancestor) == "figure")
-                .is_some_and(|nearest| nearest.id == figure.id)
-    })
 }
 
 /// Rows in display order: `<thead>`, then bodies and bare rows, then `<tfoot>`.
@@ -755,17 +696,4 @@ fn table_rows<'a>(table: &NodeRef<'a>) -> Vec<NodeRef<'a>> {
         }
     }
     head.into_iter().chain(body).chain(foot).collect()
-}
-
-/// Joins `next` onto `caption` as a new line, shifting its spans.
-fn append_line(caption: &mut TextBlock, next: TextBlock) {
-    caption.text.push('\n');
-    let offset = caption.text.len();
-    caption.text.push_str(&next.text);
-    caption.ids.extend(next.ids);
-    caption.spans.extend(next.spans.into_iter().map(|mut span| {
-        span.start += offset;
-        span.end += offset;
-        span
-    }));
 }

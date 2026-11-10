@@ -32,26 +32,28 @@ fn heading_levels_one_through_six() {
 }
 
 #[test]
-fn generic_containers_do_not_create_blocks() {
+fn generic_containers_flow_into_the_surrounding_text() {
     let doc = run(
         "<div><section><article>Hello <custom-tag>there</custom-tag></article></section></div>",
     );
-
     assert_eq!(texts(&doc), ["Hello there"]);
+
+    let doc = run("before<div>inside</div><hr><section>after</section>");
+    assert_eq!(texts(&doc), ["beforeinsideafter"]);
 }
 
 #[test]
-fn sibling_containers_keep_their_text_apart() {
-    let doc = run("<div>One</div><div>Two</div>");
+fn paragraphs_inside_containers_still_split() {
+    let doc = run("<div>one<p>two</p>three</div>");
 
-    assert_eq!(texts(&doc), ["One", "Two"]);
+    assert_eq!(texts(&doc), ["one", "two", "three"]);
 }
 
 #[test]
 fn inline_styles() {
     let doc = run(
-        "<p><b>b</b> <strong>s</strong> <i>i</i> <em>e</em> <u>u</u> <s>x</s> <del>d</del> \
-         <sup>1</sup> <sub>2</sub> <tt>t</tt> <kbd>k</kbd> <code>c</code> \
+        "<p><b>b</b> <strong>s</strong> <i>i</i> <em>e</em> <cite>c</cite> <dfn>d</dfn> \
+         <u>u</u> <s>x</s> <sup>1</sup> <sub>2</sub> <tt>t</tt> <code>c</code> \
          <font face=\"Georgia\">f</font></p>",
     );
 
@@ -62,13 +64,13 @@ fn inline_styles() {
             (Style::Bold, "s"),
             (Style::Italic, "i"),
             (Style::Italic, "e"),
+            (Style::Italic, "c"),
+            (Style::Italic, "d"),
             (Style::Underline, "u"),
             (Style::Strikethrough, "x"),
-            (Style::Strikethrough, "d"),
             (Style::Superscript, "1"),
             (Style::Subscript, "2"),
             (Style::Monospace, "t"),
-            (Style::Monospace, "k"),
             (Style::Code, "c"),
             (
                 Style::Font {
@@ -78,6 +80,14 @@ fn inline_styles() {
             ),
         ]
     );
+}
+
+#[test]
+fn other_inline_tags_are_unstyled() {
+    let doc = run("<p><del>d</del> <ins>i</ins> <kbd>k</kbd> <samp>s</samp> <mark>m</mark></p>");
+
+    assert_eq!(texts(&doc), ["d i k s m"]);
+    assert!(text(&doc.blocks[0]).spans.is_empty());
 }
 
 #[test]
@@ -102,14 +112,18 @@ fn overlapping_styles_nest() {
 
 #[test]
 fn links_resolve_against_the_base_url() {
-    let doc =
-        run("<p><a href=\"../about\">About</a> <a href=\"mailto:me@example.com\">Mail</a></p>");
+    let doc = run(
+        "<p><a href=\"../about\">About</a> <a href=\"mailto:me@example.com\">Mail</a> \
+         <a href=\"\">Here</a> <a href=\"//cdn.example.com/x\">Cdn</a></p>",
+    );
 
     assert_eq!(
         styles(text(&doc.blocks[0])),
         [
             (link("https://example.com/about"), "About"),
             (link("mailto:me@example.com"), "Mail"),
+            (link(BASE), "Here"),
+            (link("https://cdn.example.com/x"), "Cdn"),
         ]
     );
 }
@@ -138,6 +152,13 @@ fn whitespace_collapses_like_a_browser() {
 }
 
 #[test]
+fn non_breaking_spaces_collapse_too() {
+    let doc = run("<p>one\u{a0}\u{a0}two \u{a0}three</p>");
+
+    assert_eq!(texts(&doc), ["one two three"]);
+}
+
+#[test]
 fn preformatted_text_keeps_whitespace() {
     let doc = run(
         "<pre>  line one\n    line two  \n</pre><pre><code>fn main() {\n    run();\n}</code></pre>",
@@ -149,30 +170,32 @@ fn preformatted_text_keeps_whitespace() {
     );
     assert_eq!(text(&doc.blocks[0]).kind, TextKind::Preformatted);
     assert_eq!(text(&doc.blocks[1]).kind, TextKind::Code);
-    assert!(text(&doc.blocks[1]).spans.is_empty());
+    assert_eq!(
+        styles(text(&doc.blocks[1])),
+        [(Style::Code, "fn main() {\n    run();\n}")]
+    );
 }
 
 #[test]
 fn line_breaks_stay_within_a_block() {
-    let doc = run("<p>One<br>Two <br/> Three<br></p>");
+    let doc = run("<p>One<br>Two <br/> Three</p><p><br>Leading</p>");
 
-    assert_eq!(texts(&doc), ["One\nTwo\nThree"]);
+    assert_eq!(texts(&doc), ["One\nTwo\nThree", "\nLeading"]);
 }
 
 #[test]
 fn span_inline_styles() {
     let doc = run(
-        "<p><span style=\"font-weight: bold\">a</span> <span style=\"font-weight:700\">b</span> \
-         <span style=\"font-style: italic\">c</span> <span style=\"font-style: oblique\">d</span></p>",
+        "<p><span style=\"font-weight: bold\">a</span> <span style=\"font-style: italic\">b</span> \
+         <span style=\"font-style: oblique\">c</span> <span style=\"font-weight:700\">d</span></p>",
     );
 
     assert_eq!(
         styles(text(&doc.blocks[0])),
         [
             (Style::Bold, "a"),
-            (Style::Bold, "b"),
-            (Style::Italic, "c"),
-            (Style::Italic, "d"),
+            (Style::Italic, "b"),
+            (Style::Italic, "c")
         ]
     );
 }
@@ -201,7 +224,7 @@ fn scripts_and_styles_are_dropped() {
 }
 
 #[test]
-fn image_sources_from_src_srcset_and_lazy_attributes() {
+fn image_sources_come_from_srcset_then_data_src_then_src() {
     let doc = run(
         "<img src=\"data:image/gif;base64,R0lGOD\" data-src=\"/real.jpg\" width=\"640\" height=\"480\" \
          srcset=\"/small.jpg 320w, /large.jpg 1280w, /retina.jpg 2x\">",
@@ -212,28 +235,51 @@ fn image_sources_from_src_srcset_and_lazy_attributes() {
     assert_eq!(
         urls,
         [
-            "https://example.com/real.jpg",
             "https://example.com/small.jpg",
             "https://example.com/large.jpg",
             "https://example.com/retina.jpg",
+            "https://example.com/real.jpg",
+            "data:image/gif;base64,R0lGOD",
         ]
     );
+    assert_eq!(image.sources[1].srcset_width, Some(1280));
+    assert_eq!(image.sources[2].density, Some(2.0));
     assert_eq!(
-        (image.sources[0].width, image.sources[0].height),
+        (image.sources[3].width, image.sources[3].height),
         (Some(640), Some(480))
     );
-    assert_eq!(image.sources[2].srcset_width, Some(1280));
-    assert_eq!(image.sources[3].density, Some(2.0));
 }
 
 #[test]
-fn background_images_become_images() {
-    let doc = run("<div style=\"background-image: url('/Hero.JPG')\"></div>");
+fn image_dimensions_need_both_plain_integers() {
+    let size = |html: &str| {
+        let doc = run(html);
+        let source = &image(&doc.blocks[0]).sources[0];
+        (source.width, source.height)
+    };
+
+    assert_eq!(
+        size("<img src=\"/a.jpg\" width=\"100\" height=\"50\">"),
+        (Some(100), Some(50))
+    );
+    assert_eq!(size("<img src=\"/a.jpg\" width=\"100\">"), (None, None));
+    assert_eq!(
+        size("<img src=\"/a.jpg\" width=\"100px\" height=\"50\">"),
+        (None, None)
+    );
+}
+
+#[test]
+fn background_images_on_img_are_sources() {
+    let doc = run(
+        "<img style=\"background-image: url('/Hero.JPG')\"><div style=\"background-image: url(/div.jpg)\">text</div>",
+    );
 
     assert_eq!(
         image(&doc.blocks[0]).sources[0].url,
         "https://example.com/Hero.JPG"
     );
+    assert_eq!(texts(&doc), ["text"]);
 }
 
 #[test]
@@ -242,6 +288,14 @@ fn bare_images_use_alt_text_as_caption() {
 
     assert_eq!(caption(&doc.blocks[1]), Some("A bold claim"));
     assert_eq!(texts(&doc), ["Before", "After"]);
+}
+
+#[test]
+fn images_split_the_paragraph_around_them() {
+    let doc = run("<p>Text before <img src=\"/inline.jpg\"> text after</p>");
+
+    assert_eq!(texts(&doc), ["Text before", "text after"]);
+    assert!(matches!(doc.blocks[1], Block::Image(_)));
 }
 
 #[test]
@@ -255,41 +309,31 @@ fn linked_images_keep_the_link() {
 }
 
 #[test]
-fn figures_use_their_figcaption() {
+fn figures_take_their_caption_from_their_own_text() {
     let doc = run(
         "<figure><img src=\"/a.png\" alt=\"alt text\"><figcaption>The <i>real</i> caption</figcaption></figure><p>Next</p>",
     );
 
     assert_eq!(doc.blocks.len(), 2);
     assert_eq!(caption(&doc.blocks[0]), Some("The real caption"));
-    let caption = image(&doc.blocks[0]).caption.as_ref().unwrap();
-    assert_eq!(styles(caption), [(Style::Italic, "real")]);
+    let figcaption = image(&doc.blocks[0]).caption.as_ref().unwrap();
+    assert_eq!(styles(figcaption), [(Style::Italic, "real")]);
+
+    let doc = run("<figure><img src=\"/a.png\"><div><p>Credit</p><p>More</p></div></figure>");
+    assert_eq!(caption(&doc.blocks[0]), Some("Credit"));
+
+    let doc = run("<figure><img src=\"/a.png\" alt=\"Alt\"></figure>");
+    assert_eq!(caption(&doc.blocks[0]), None);
 }
 
 #[test]
-fn nested_figures_keep_their_own_captions() {
+fn figures_are_one_image_from_every_image_inside() {
     let doc = run(
         "<figure><figure><img src=\"/a.png\"><figcaption>Inner</figcaption></figure>\
          <img src=\"/b.png\"><figcaption>Outer</figcaption></figure>",
     );
 
-    assert_eq!(caption(&doc.blocks[0]), Some("Inner"));
-    assert_eq!(caption(&doc.blocks[1]), Some("Outer"));
-}
-
-#[test]
-fn figure_captions_attach_to_an_image_just_outside_the_figure() {
-    let doc = run("<img src=\"/a.png\"><figure><figcaption>Caption</figcaption></figure>");
-
     assert_eq!(doc.blocks.len(), 1);
-    assert_eq!(caption(&doc.blocks[0]), Some("Caption"));
-}
-
-#[test]
-fn picture_sources_join_the_image() {
-    let doc =
-        run("<picture><source srcset=\"/a.avif 1x, /a@2x.avif 2x\"><img src=\"/a.jpg\"></picture>");
-
     let urls: Vec<&str> = image(&doc.blocks[0])
         .sources
         .iter()
@@ -297,12 +341,43 @@ fn picture_sources_join_the_image() {
         .collect();
     assert_eq!(
         urls,
-        [
-            "https://example.com/a.jpg",
-            "https://example.com/a.avif",
-            "https://example.com/a@2x.avif",
-        ]
+        ["https://example.com/a.png", "https://example.com/b.png"]
     );
+    assert_eq!(caption(&doc.blocks[0]), Some("Outer"));
+}
+
+#[test]
+fn figures_without_images_are_dropped_unless_they_embed_video() {
+    let doc = run(
+        "<figure><blockquote>Pull quote</blockquote><figcaption>Cap</figcaption></figure>\
+         <figure><iframe src=\"https://www.youtube.com/embed/dQw4w9WgXcQ\"></iframe></figure><p>after</p>",
+    );
+
+    assert_eq!(doc.blocks.len(), 2);
+    assert!(matches!(doc.blocks[0], Block::Video(_)));
+    assert_eq!(texts(&doc), ["after"]);
+}
+
+#[test]
+fn figures_keep_an_enclosing_link() {
+    let doc = run("<a href=\"/x\"><figure><img src=\"/a.png\"></figure></a>");
+
+    assert_eq!(
+        image(&doc.blocks[0]).link.as_deref(),
+        Some("https://example.com/x")
+    );
+}
+
+#[test]
+fn picture_sources_are_ignored() {
+    let doc = run("<picture><source srcset=\"/a.avif\"><img src=\"/a.jpg\"></picture>");
+
+    let urls: Vec<&str> = image(&doc.blocks[0])
+        .sources
+        .iter()
+        .map(|s| s.url.as_str())
+        .collect();
+    assert_eq!(urls, ["https://example.com/a.jpg"]);
 }
 
 #[test]
@@ -320,7 +395,7 @@ fn unordered_lists() {
 }
 
 #[test]
-fn ordered_list_numbering() {
+fn ordered_items_are_numbered_by_position() {
     let numbers = |html: &str| -> Vec<Option<i32>> {
         run(html)
             .blocks
@@ -337,17 +412,20 @@ fn ordered_list_numbering() {
         [Some(1), Some(2), Some(3)]
     );
     assert_eq!(
-        numbers("<ol start=\"5\"><li>a<li>b</ol>"),
-        [Some(5), Some(6)]
+        numbers("<ol start=\"5\" reversed><li>a<li value=\"9\">b</ol>"),
+        [Some(1), Some(2)]
     );
-    assert_eq!(
-        numbers("<ol><li>a<li value=\"10\">b<li>c</ol>"),
-        [Some(1), Some(10), Some(11)]
+}
+
+#[test]
+fn only_list_items_count_inside_a_list() {
+    let doc = run("<ul>stray<li>item</li></ul><li>orphan</li>");
+
+    assert_eq!(doc.blocks.len(), 2);
+    assert!(
+        matches!(&doc.blocks[0], Block::ListItem(item) if text(&item.blocks[0]).text == "item")
     );
-    assert_eq!(
-        numbers("<ol reversed><li>a<li>b<li>c</ol>"),
-        [Some(3), Some(2), Some(1)]
-    );
+    assert_eq!(texts(&doc), ["orphan"]);
 }
 
 #[test]
@@ -373,18 +451,39 @@ fn quotes_hold_text_and_their_citation() {
     let Block::Quote(quote) = &doc.blocks[0] else {
         panic!("expected a quote")
     };
-    assert_eq!(quote.cite.as_deref(), Some("https://example.com/source"));
+    assert_eq!(quote.cite.as_deref(), Some("/source"));
     assert_eq!(quote.blocks.len(), 2);
 }
 
 #[test]
-fn quotes_split_around_media() {
-    let doc = run("<blockquote><p>Before</p><img src=\"/a.png\"><p>After</p></blockquote>");
+fn quotes_split_around_everything_but_text() {
+    let doc = run(
+        "<blockquote><p>Before</p><img src=\"/a.png\"><p>Middle</p><ul><li>Item</li></ul>\
+         <blockquote><p>Inner</p></blockquote><p>After</p></blockquote>",
+    );
 
-    assert_eq!(doc.blocks.len(), 3);
-    assert!(matches!(&doc.blocks[0], Block::Quote(q) if text(&q.blocks[0]).text == "Before"));
-    assert!(matches!(doc.blocks[1], Block::Image(_)));
-    assert!(matches!(&doc.blocks[2], Block::Quote(q) if text(&q.blocks[0]).text == "After"));
+    let kinds: Vec<&str> = doc
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::Quote(_) => "quote",
+            Block::Image(_) => "image",
+            Block::ListItem(_) => "item",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(kinds, ["quote", "image", "quote", "item", "quote", "quote"]);
+}
+
+#[test]
+fn media_inside_a_list_item_in_a_quote_stays_in_the_item() {
+    let doc = run("<blockquote><ul><li>item <img src=\"/q.jpg\"> more</li></ul></blockquote>");
+
+    assert_eq!(doc.blocks.len(), 1);
+    let Block::ListItem(item) = &doc.blocks[0] else {
+        panic!("expected a list item")
+    };
+    assert_eq!(item.blocks.len(), 3);
 }
 
 #[test]
@@ -437,6 +536,17 @@ fn table_layout_gives_span_aware_grid_cells() {
 }
 
 #[test]
+fn rowspan_zero_spans_to_the_last_row() {
+    let doc = run(
+        "<table><tr><td rowspan=\"0\">Tall</td><td>a</td></tr><tr><td>b</td></tr><tr><td>c</td></tr></table>",
+    );
+
+    let table = table(&doc.blocks[0]);
+    assert_eq!(table.cell(0, 0).unwrap().row_span, 3);
+    assert_eq!(cell_text(table, 2, 1), "c");
+}
+
+#[test]
 fn right_to_left_tables_are_mirrored() {
     let doc = run(
         "<table dir=\"rtl\"><tr><td>First</td><td>Second</td></tr><tr><td colspan=2>Wide</td></tr></table>",
@@ -458,22 +568,42 @@ fn single_row_and_single_column_tables_become_plain_content() {
 }
 
 #[test]
+fn table_captions_are_dropped() {
+    let doc = run(
+        "<table><caption>Cap</caption><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+    );
+
+    assert_eq!(doc.blocks.len(), 1);
+    assert!(matches!(doc.blocks[0], Block::Table(_)));
+}
+
+#[test]
 fn youtube_embeds_become_videos() {
-    for src in [
-        "https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0",
-        "//www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
-        "https://youtu.be/dQw4w9WgXcQ",
-        "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+    for (src, url) in [
+        (
+            "https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0",
+            "https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0",
+        ),
+        (
+            "//www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        ),
+        (
+            "https://youtu.be/dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ",
+        ),
+        (
+            "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
     ] {
-        let doc = run(&format!(
-            "<iframe src=\"{src}\" width=\"560\" height=\"315\"></iframe>"
-        ));
+        let doc = run(&format!("<iframe src=\"{src}\" width=\"560\"></iframe>"));
 
         let Block::Video(video) = &doc.blocks[0] else {
             panic!("expected a video for {src}")
         };
         let source = &video.sources[0];
-        assert_eq!(source.url, "https://www.youtube.com/embed/dQw4w9WgXcQ");
+        assert_eq!(source.url, url);
         assert_eq!(
             source.link.as_deref(),
             Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
@@ -482,13 +612,16 @@ fn youtube_embeds_become_videos() {
             source.thumbnail.as_deref(),
             Some("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
         );
-        assert_eq!((source.width, source.height), (Some(560), Some(315)));
+        assert_eq!((source.width, source.height), (Some(560), Some(360)));
     }
 }
 
 #[test]
 fn other_iframes_are_dropped() {
-    let doc = run("<p>Text</p><iframe src=\"https://ads.example.com/frame\"></iframe>");
+    let doc = run(
+        "<p>Text</p><iframe src=\"https://player.vimeo.com/video/1\"></iframe>\
+         <iframe data-src=\"https://www.youtube.com/embed/dQw4w9WgXcQ\"></iframe>",
+    );
 
     assert_eq!(doc.blocks.len(), 1);
 }
@@ -496,22 +629,30 @@ fn other_iframes_are_dropped() {
 #[test]
 fn video_and_audio_sources() {
     let doc = run(
-        "<video poster=\"/poster.jpg\"><source src=\"/clip.webm\" type=\"video/webm\"><source src=\"/clip.mp4\"></video>\
-         <audio src=\"/episode.mp3\" type=\"audio/mpeg\"></audio>",
+        "<video poster=\"/poster.jpg\" width=\"640\" height=\"360\"><source src=\"/clip.webm\" type=\"video/webm\"><source src=\"/clip.mp4\">fallback</video>\
+         <audio src=\"/ignored.mp3\"><source src=\"/episode.mp3\" type=\"audio/mpeg\"></audio>",
     );
 
+    assert_eq!(doc.blocks.len(), 2);
     let Block::Video(video) = &doc.blocks[0] else {
         panic!("expected a video")
     };
     assert_eq!(video.sources.len(), 2);
-    assert_eq!(video.sources[0].mime_type.as_deref(), Some("video/webm"));
+    let source = &video.sources[0];
     assert_eq!(
-        video.sources[0].thumbnail.as_deref(),
+        source.link.as_deref(),
+        Some("https://example.com/clip.webm")
+    );
+    assert_eq!(source.mime_type.as_deref(), Some("video/webm"));
+    assert_eq!(
+        source.thumbnail.as_deref(),
         Some("https://example.com/poster.jpg")
     );
+    assert_eq!((source.width, source.height), (Some(640), Some(360)));
     let Block::Audio(audio) = &doc.blocks[1] else {
         panic!("expected audio")
     };
+    assert_eq!(audio.sources.len(), 1);
     assert_eq!(audio.sources[0].url, "https://example.com/episode.mp3");
     assert_eq!(audio.sources[0].mime_type.as_deref(), Some("audio/mpeg"));
 }
@@ -521,7 +662,8 @@ fn ids_resolve_to_their_top_level_block() {
     let doc = run(
         "<h2 id=\"intro\">Intro</h2><p>See <span id=\"note\">this</span></p>\
          <ul id=\"list\"><li id=\"item\">Item <a id=\"deep\">x</a></li></ul>\
-         <table><tr><td id=\"cell\">a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+         <table><tr><td id=\"cell\">a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>\
+         <figure id=\"figure\"><img id=\"image\" src=\"/a.png\"><figcaption id=\"caption\">c</figcaption></figure>",
     );
 
     assert_eq!(doc.anchors["intro"], 0);
@@ -530,6 +672,9 @@ fn ids_resolve_to_their_top_level_block() {
     assert_eq!(doc.anchors["item"], 2);
     assert_eq!(doc.anchors["deep"], 2);
     assert_eq!(doc.anchors["cell"], 3);
+    assert_eq!(doc.anchors["figure"], 4);
+    assert_eq!(doc.anchors["image"], 4);
+    assert_eq!(doc.anchors["caption"], 4);
     assert!(doc.blocks[0].ids().contains("intro"));
     assert!(matches!(doc.block_for_anchor("note"), Some(Block::Text(t)) if t.text == "See this"));
 }
@@ -562,7 +707,8 @@ fn block_cap_stops_conversion() {
 
     assert_eq!(doc.blocks.len(), 3);
     let truncation = doc.truncation.expect("truncation");
-    assert_eq!((truncation.blocks, truncation.chars), (3, 3));
+    // The counts include the block that went over the cap.
+    assert_eq!((truncation.blocks, truncation.chars), (4, 4));
 }
 
 #[test]
@@ -574,12 +720,18 @@ fn char_cap_stops_conversion() {
         .unwrap();
 
     assert_eq!(texts(&doc), ["12345", "12345"]);
-    assert_eq!(doc.truncation.map(|t| t.chars), Some(10));
+    assert_eq!(doc.truncation.map(|t| (t.blocks, t.chars)), Some((3, 15)));
 }
 
 #[test]
 fn documents_under_the_caps_are_not_truncated() {
     assert_eq!(run("<p>Short</p>").truncation, None);
+    let exactly = "<p>x</p>".repeat(3);
+    let doc = Condenser::new()
+        .max_blocks(3)
+        .condense(&exactly, BASE)
+        .unwrap();
+    assert_eq!(doc.truncation, None);
 }
 
 #[test]
@@ -598,10 +750,11 @@ fn large_real_world_page_stays_within_the_caps() {
     assert!(blocks <= mariner_condense::DEFAULT_MAX_BLOCKS);
 
     let small = Condenser::new()
-        .max_blocks(25)
+        .max_blocks(5)
         .condense(&html, "https://www.reddit.com/")
         .unwrap();
-    assert_eq!(small.truncation.map(|t| t.blocks), Some(25));
+    assert_eq!(small.blocks.len(), 5);
+    assert_eq!(small.truncation.map(|t| t.blocks), Some(6));
 }
 
 #[test]
@@ -623,14 +776,19 @@ fn reads_from_a_reader() {
 #[test]
 fn serializes_to_json_and_back() {
     let doc = run(
-        "<h1 id=\"t\">T</h1><p><b>x</b></p><img src=\"/a.png\"><table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+        "<h1 id=\"t\">T</h1><p><b>x</b> <a href=\"/l\">l</a></p><img src=\"/a.png\"><table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
     );
 
     let json = serde_json::to_string(&doc).unwrap();
     let parsed: ArticleDocument = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed, doc);
     assert!(json.contains("\"type\":\"text\""));
-    assert!(json.contains("\"style\":\"bold\""));
+    assert!(json.contains("{\"style\":\"bold\",\"start\":0,\"end\":1}"));
+    assert!(
+        json.contains(
+            "{\"style\":\"link\",\"url\":\"https://example.com/l\",\"start\":2,\"end\":3}"
+        )
+    );
 }
 
 fn run(html: &str) -> ArticleDocument {

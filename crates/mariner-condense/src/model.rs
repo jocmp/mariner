@@ -147,6 +147,8 @@ pub enum TextKind {
 /// inclusive and `end` exclusive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
+    /// Serialized flat: `{"style": "link", "url": ..., "start": 0, "end": 4}`.
+    #[serde(flatten)]
     pub style: Style,
     pub start: usize,
     pub end: usize,
