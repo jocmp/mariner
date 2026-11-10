@@ -401,7 +401,7 @@ fn scan(input: &mut InputReader) -> Token {
         let n = input.read_unsigned_numeral();
         return Token::new(Tag::Number, input.position() - pre_pos, n);
     }
-    for c in [b':', b'-', b'+', b'.', b')'] {
+    for c in *b":-+.)" {
         if input.skip(c) {
             return Token::new(Tag::Symbol, 1, i32::from(c));
         }
