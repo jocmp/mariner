@@ -1,5 +1,7 @@
 //! What an account stores, as callers see it.
 
+use chrono::{DateTime, Utc};
+
 /// A subscribed feed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feed {
@@ -13,6 +15,29 @@ pub struct Feed {
     pub itunes_image_url: Option<String>,
     /// Sorted by name.
     pub tag_names: Vec<String>,
+}
+
+/// An article as a list shows it, without its content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Article {
+    pub id: String,
+    pub feed_id: String,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub url: Option<String>,
+    pub summary: Option<String>,
+    pub image_url: Option<String>,
+    pub published_at: DateTime<Utc>,
+    pub read: bool,
+    pub starred: bool,
+}
+
+/// Which articles to list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArticleFilter {
+    All,
+    Unread,
+    Starred,
 }
 
 /// What adding a feed by URL led to.

@@ -1,6 +1,7 @@
 //! Threads that each own a connection and run the work sent to them.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,8 +22,9 @@ pub(super) struct Pool {
 
 impl Pool {
     /// Starts `size` threads, each opening its own connection with `open`.
-    /// Fails if any connection fails to open.
-    pub async fn open<F>(size: usize, open: F) -> Result<Pool, Error>
+    /// Fails if any connection fails to open. Whenever `statistics` changes,
+    /// each connection reloads the planner's statistics before its next job.
+    pub async fn open<F>(size: usize, statistics: Arc<AtomicU64>, open: F) -> Result<Pool, Error>
     where
         F: Fn() -> Result<Connection, Error> + Send + Sync + 'static,
     {
@@ -36,9 +38,12 @@ impl Pool {
             let (closed_sender, closed_receiver) = oneshot::channel();
             let open = Arc::clone(&open);
             let receiver = Arc::clone(&receiver);
+            let statistics = Arc::clone(&statistics);
             thread::Builder::new()
                 .name(format!("mariner-db-{index}"))
-                .spawn(move || serve(open(), &receiver, opened_sender, closed_sender))?;
+                .spawn(move || {
+                    serve(&*open, &receiver, &statistics, opened_sender, closed_sender)
+                })?;
             opened.push(opened_receiver);
             closed.push(closed_receiver);
         }
@@ -77,12 +82,14 @@ impl Pool {
 /// A pool thread: opens its connection, reports whether that worked, then
 /// runs jobs until the pool is closed or dropped.
 fn serve(
-    opened: Result<Connection, Error>,
+    open: &dyn Fn() -> Result<Connection, Error>,
     receiver: &Mutex<Receiver<Job>>,
+    statistics: &AtomicU64,
     opened_sender: oneshot::Sender<Result<(), Error>>,
     closed_sender: oneshot::Sender<()>,
 ) {
-    let mut connection = match opened {
+    let mut loaded = statistics.load(Ordering::Acquire);
+    let mut connection = match open() {
         Ok(connection) => {
             let _ = opened_sender.send(Ok(()));
             connection
@@ -98,6 +105,15 @@ fn serve(
             Err(_) => break,
         };
         let Ok(job) = job else { break };
+        let current = statistics.load(Ordering::Acquire);
+        if current != loaded {
+            // A connection reads the planner's statistics when it opens, and
+            // a read-only one can't be told to reload them.
+            if let Ok(reopened) = open() {
+                connection::close(std::mem::replace(&mut connection, reopened));
+            }
+            loaded = current;
+        }
         job(&mut connection);
     }
     connection::close(connection);

@@ -11,7 +11,7 @@ use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::FoundFeed;
 
 use crate::database::Database;
-use crate::model::{AddFeedResult, Feed};
+use crate::model::{AddFeedResult, Article, ArticleFilter, Feed};
 use crate::{Result, queries, time};
 
 mod articles;
@@ -60,7 +60,25 @@ impl<F: Fetch + Send + Sync> Account<F> {
     pub async fn refresh(&self, cutoff: Option<DateTime<Utc>>) -> Result<()> {
         self.delegate.refresh(self, cutoff).await?;
         let before = time::now() - articles::TOMBSTONE_LIFETIME;
-        articles::delete_old_tombstones(&self.database, before).await
+        articles::delete_old_tombstones(&self.database, before).await?;
+        Ok(self.database.optimize().await?)
+    }
+
+    /// A page of articles, newest first, from one feed or all of them.
+    pub async fn articles(
+        &self,
+        filter: ArticleFilter,
+        feed_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Article>> {
+        queries::articles(&self.database, filter, feed_id, limit, offset).await
+    }
+
+    /// Marks every unread article read, in one feed or all of them.
+    pub async fn mark_all_read(&self, feed_id: Option<&str>) -> Result<()> {
+        let ids = queries::unread_article_ids(&self.database, feed_id).await?;
+        self.mark_read(&ids).await
     }
 
     pub async fn mark_read(&self, article_ids: &[String]) -> Result<()> {

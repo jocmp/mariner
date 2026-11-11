@@ -24,8 +24,13 @@ url.workspace = true
 rusqlite.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 futures-executor.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "database"
+harness = false
 
 [lints]
 workspace = true

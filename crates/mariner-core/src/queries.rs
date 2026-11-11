@@ -4,12 +4,54 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::Result;
 use crate::database::Database;
-use crate::model::Feed;
-use crate::sql::account::{feeds, tags};
+use chrono::DateTime;
+
+use crate::model::{Article, ArticleFilter, Feed};
+use crate::sql::account::{article_list, feeds, tags};
 
 /// Every feed, by title (case-insensitively).
 pub(crate) async fn feeds(database: &Database) -> Result<Vec<Feed>> {
     Ok(database.read(all_feeds).await?)
+}
+
+/// A page of articles, newest first, from one feed or all of them.
+pub(crate) async fn articles(
+    database: &Database,
+    filter: ArticleFilter,
+    feed_id: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<Article>> {
+    let feed_id = feed_id.map(String::from);
+    let sql = match filter {
+        ArticleFilter::All => article_list::SELECT_ARTICLES,
+        ArticleFilter::Unread => article_list::SELECT_UNREAD_ARTICLES,
+        ArticleFilter::Starred => article_list::SELECT_STARRED_ARTICLES,
+    };
+    Ok(database
+        .read(move |connection| {
+            connection
+                .prepare_cached(sql)?
+                .query_map(params![feed_id, limit as i64, offset as i64], article_row)?
+                .collect()
+        })
+        .await?)
+}
+
+/// Every unread article's id, from one feed or all of them.
+pub(crate) async fn unread_article_ids(
+    database: &Database,
+    feed_id: Option<&str>,
+) -> Result<Vec<String>> {
+    let feed_id = feed_id.map(String::from);
+    Ok(database
+        .read(move |connection| {
+            connection
+                .prepare_cached(article_list::SELECT_UNREAD_ARTICLE_IDS)?
+                .query_map(params![feed_id], |row| row.get(0))?
+                .collect()
+        })
+        .await?)
 }
 
 /// The feed subscribed at exactly `url`.
@@ -59,6 +101,22 @@ fn feed_row(row: &Row) -> rusqlite::Result<Feed> {
         favicon_url: row.get(5)?,
         itunes_image_url: row.get(6)?,
         tag_names: Vec::new(),
+    })
+}
+
+/// A row of the `article_list` queries.
+fn article_row(row: &Row) -> rusqlite::Result<Article> {
+    Ok(Article {
+        id: row.get(0)?,
+        feed_id: row.get(1)?,
+        title: row.get(2)?,
+        author: row.get(3)?,
+        url: row.get(4)?,
+        summary: row.get(5)?,
+        image_url: row.get(6)?,
+        published_at: DateTime::from_timestamp(row.get(7)?, 0).unwrap_or_default(),
+        read: row.get(8)?,
+        starred: row.get(9)?,
     })
 }
 

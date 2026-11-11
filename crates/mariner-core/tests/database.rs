@@ -218,6 +218,60 @@ fn reopening_keeps_data_and_migrates_once() {
 }
 
 #[test]
+fn readers_plan_with_fresh_statistics_after_optimize() {
+    block_on(async {
+        let (_dir, database) = account().await;
+        let plan = || async {
+            database
+                .read(|connection| {
+                    connection.query_row(
+                        "EXPLAIN QUERY PLAN
+                         SELECT a.id FROM articles a
+                         JOIN article_statuses s ON s.article_id = a.id
+                         WHERE s.read = 0 ORDER BY a.published_at DESC LIMIT 50",
+                        [],
+                        |row| row.get::<_, String>(3),
+                    )
+                })
+                .await
+                .unwrap()
+        };
+        // Load each reader's schema while the tables are empty.
+        for _ in 0..6 {
+            plan().await;
+        }
+        database
+            .write(|connection| {
+                let transaction = connection.transaction()?;
+                transaction.execute(
+                    "INSERT INTO feeds (id, subscription_id, title, feed_url) VALUES ('f', 'f', 'F', 'u')",
+                    [],
+                )?;
+                for index in 0..2_000 {
+                    let id = format!("{index:040x}");
+                    transaction.execute(
+                        "INSERT INTO articles (id, feed_id, published_at, created_at) VALUES (?1, 'f', ?2, ?2)",
+                        rusqlite::params![id, index],
+                    )?;
+                    transaction.execute(
+                        "INSERT INTO article_statuses (article_id, read, updated_at) VALUES (?1, ?2, 1)",
+                        rusqlite::params![id, index % 5 == 0],
+                    )?;
+                }
+                transaction.commit()
+            })
+            .await
+            .unwrap();
+
+        database.optimize().await.unwrap();
+        for _ in 0..6 {
+            let plan = plan().await;
+            assert!(plan.contains("articles_published_at_index"), "{plan}");
+        }
+    });
+}
+
+#[test]
 fn survives_a_panicking_task() {
     block_on(async {
         let (_dir, database) = account().await;
