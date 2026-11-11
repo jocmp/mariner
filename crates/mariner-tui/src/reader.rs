@@ -498,14 +498,14 @@ fn styled_runs(block: &TextBlock, base: Style) -> Vec<Segment> {
             let style = covering
                 .clone()
                 .fold(base, |style, span| style.patch(span_style(&span.style)));
-            let link = covering.filter_map(|span| match &span.style {
+            let mut link = covering.filter_map(|span| match &span.style {
                 SpanStyle::Link { url } => Some(Arc::from(url.as_str())),
                 _ => None,
             });
             Some(Segment {
                 text: run.to_string(),
                 style,
-                link: link.last(),
+                link: link.next_back(),
             })
         })
         .collect()

@@ -52,6 +52,9 @@ pub fn run(
     Ok(result?)
 }
 
+/// Opens a URL in the browser.
+type Opener = Box<dyn Fn(&str) -> std::io::Result<()>>;
+
 /// The pane with the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -81,7 +84,7 @@ pub struct App<'a> {
     /// A dialog over the panes, which takes every key while it's open.
     pub dialog: Option<Dialog>,
     /// Opens a URL in the browser; swappable so tests don't.
-    opener: Box<dyn Fn(&str) -> std::io::Result<()>>,
+    opener: Opener,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
     adding: Option<JoinHandle<mariner_core::Result<AddFeedResult>>>,
     quit: bool,
