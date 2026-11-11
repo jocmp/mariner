@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mariner_core::{AddFeedResult, Article, ArticleFilter, Feed};
+use mariner_core::{AddFeedResult, Article, ArticleContent, ArticleFilter, Feed};
+use mariner_feeds::fetch::HttpFetcher;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -28,8 +29,7 @@ pub fn run(
     runtime: &Runtime,
     account: Arc<LocalAccount>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let images = Images::new(mariner_feeds::fetch::HttpFetcher::new()?);
-    let mut app = App::new(runtime, account, images);
+    let mut app = App::new(runtime, account, HttpFetcher::new()?);
     app.reload();
     let mut terminal = ratatui::init();
     let result = (|| -> std::io::Result<()> {
@@ -83,6 +83,13 @@ pub struct App<'a> {
     pub status: String,
     /// A dialog over the panes, which takes every key while it's open.
     pub dialog: Option<Dialog>,
+    /// Fetches article pages for their full text.
+    fetcher: HttpFetcher,
+    /// Full texts extracted this session by article id; `None` when the
+    /// page had no article.
+    full_texts: HashMap<String, Option<String>>,
+    /// The article whose full text is being extracted.
+    extracting: Option<(String, JoinHandle<mariner_core::Result<Option<String>>>)>,
     /// Opens a URL in the browser; swappable so tests don't.
     opener: Opener,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
@@ -101,6 +108,10 @@ pub struct Areas {
 /// The open article.
 pub struct Reader {
     pub article: Article,
+    /// The content the feed gave, to switch back to from the full text.
+    pub feed_html: Option<String>,
+    /// Whether the full text is showing.
+    pub full_text: bool,
     pub parts: Vec<Part>,
     pub scroll: u16,
     /// The furthest the article scrolls at the last drawn size.
@@ -110,7 +121,8 @@ pub struct Reader {
 }
 
 impl<'a> App<'a> {
-    fn new(runtime: &'a Runtime, account: Arc<LocalAccount>, images: Images) -> Self {
+    fn new(runtime: &'a Runtime, account: Arc<LocalAccount>, fetcher: HttpFetcher) -> Self {
+        let images = Images::new(fetcher.clone());
         App {
             runtime,
             account,
@@ -127,6 +139,9 @@ impl<'a> App<'a> {
             areas: Areas::default(),
             status: String::new(),
             dialog: None,
+            fetcher,
+            full_texts: HashMap::new(),
+            extracting: None,
             opener: Box::new(open_in_system_browser),
             refreshing: None,
             adding: None,
@@ -185,12 +200,25 @@ impl<'a> App<'a> {
             KeyCode::Char('A') => self.mark_all_read(),
             KeyCode::Char('o') => self.open_in_browser(),
             KeyCode::Char('L') => self.show_links(),
+            KeyCode::Char('t') => self.toggle_full_text(),
             _ => {}
         }
     }
 
-    /// Notices a finished refresh or add.
+    /// Notices a finished refresh, add or extraction.
     fn tick(&mut self) {
+        if self
+            .extracting
+            .as_ref()
+            .is_some_and(|(_, handle)| handle.is_finished())
+        {
+            let (id, handle) = self.extracting.take().expect("checked");
+            let result = match self.runtime.block_on(handle) {
+                Ok(result) => result.map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            self.extracted(id, result);
+        }
         if self.adding.as_ref().is_some_and(JoinHandle::is_finished) {
             let handle = self.adding.take().expect("checked");
             let result = match self.runtime.block_on(handle) {
@@ -374,6 +402,8 @@ impl<'a> App<'a> {
                     .request(self.runtime, reader::image_urls(&parts));
                 self.reader = Some(Reader {
                     article: content.article,
+                    feed_html: content.content_html,
+                    full_text: false,
                     parts,
                     scroll: 0,
                     max_scroll: 0,
@@ -506,6 +536,81 @@ impl<'a> App<'a> {
         match (self.opener)(url) {
             Ok(()) => self.status = format!("Opened {url}"),
             Err(error) => self.status = format!("Couldn't open {url}: {error}"),
+        }
+    }
+
+    /// Switches the open article between the feed's content and the full
+    /// text from its page, extracting it in the background the first time.
+    fn toggle_full_text(&mut self) {
+        let Some(reader) = &self.reader else { return };
+        if reader.full_text {
+            self.show_content(false);
+            return;
+        }
+        let id = reader.article.id.clone();
+        match self.full_texts.get(&id) {
+            Some(Some(_)) => return self.show_content(true),
+            Some(None) => {
+                self.status = "No full text found for this article".into();
+                return;
+            }
+            None => {}
+        }
+        let Some(url) = reader.article.url.clone() else {
+            self.status = "This article has no link to read from".into();
+            return;
+        };
+        if self.extracting.is_some() {
+            return;
+        }
+        let fetcher = self.fetcher.clone();
+        let task = self
+            .runtime
+            .spawn(async move { mariner_core::extract::full_content(&fetcher, &url).await });
+        self.extracting = Some((id, task));
+        self.status = "Getting the full text…".into();
+    }
+
+    /// Keeps an extraction's result, showing it if its article is open.
+    fn extracted(&mut self, id: String, result: Result<Option<String>, String>) {
+        match result {
+            Ok(content) => {
+                let found = content.is_some();
+                self.full_texts.insert(id.clone(), content);
+                let open = self
+                    .reader
+                    .as_ref()
+                    .is_some_and(|reader| reader.article.id == id);
+                if !found {
+                    self.status = "No full text found for this article".into();
+                } else if open {
+                    self.show_content(true);
+                    self.status = "Showing the full text; t for the feed's".into();
+                }
+            }
+            Err(error) => self.status = format!("Couldn't get the full text: {error}"),
+        }
+    }
+
+    /// Shows the open article's full text, or the feed's content.
+    fn show_content(&mut self, full_text: bool) {
+        let Some(reader) = &self.reader else { return };
+        let html = if full_text {
+            self.full_texts.get(&reader.article.id).cloned().flatten()
+        } else {
+            reader.feed_html.clone()
+        };
+        let content = ArticleContent {
+            article: reader.article.clone(),
+            content_html: html,
+        };
+        let parts = reader::parts(&content, self.feed_title(&reader.article.feed_id));
+        self.images
+            .request(self.runtime, reader::image_urls(&parts));
+        if let Some(reader) = &mut self.reader {
+            reader.parts = parts;
+            reader.full_text = full_text;
+            reader.scroll = 0;
         }
     }
 
@@ -678,8 +783,11 @@ mod tests {
     fn shows_three_panes_when_wide_and_one_when_narrow() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
-        let images = Images::new(HttpFetcher::new().unwrap());
-        let mut app = App::new(&runtime, account(&runtime, dir.path()), images);
+        let mut app = App::new(
+            &runtime,
+            account(&runtime, dir.path()),
+            HttpFetcher::new().unwrap(),
+        );
         app.reload();
 
         let wide = render(&mut app, 140);
@@ -699,8 +807,11 @@ mod tests {
     fn walks_from_feeds_to_the_reader_and_back() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
-        let images = Images::new(HttpFetcher::new().unwrap());
-        let mut app = App::new(&runtime, account(&runtime, dir.path()), images);
+        let mut app = App::new(
+            &runtime,
+            account(&runtime, dir.path()),
+            HttpFetcher::new().unwrap(),
+        );
         app.reload();
 
         press(&mut app, KeyCode::Enter);
@@ -729,8 +840,7 @@ mod tests {
     }
 
     fn app<'a>(runtime: &'a Runtime, dir: &std::path::Path) -> App<'a> {
-        let images = Images::new(HttpFetcher::new().unwrap());
-        let mut app = App::new(runtime, account(runtime, dir), images);
+        let mut app = App::new(runtime, account(runtime, dir), HttpFetcher::new().unwrap());
         app.reload();
         app
     }
@@ -943,6 +1053,42 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(app.dialog.is_none());
         assert_eq!(*opened.lock().unwrap(), ["https://example.com/more"]);
+    }
+
+    #[test]
+    fn switches_between_the_feeds_content_and_the_full_text() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.open_article();
+        let id = app.reader.as_ref().unwrap().article.id.clone();
+
+        app.extracted(
+            id.clone(),
+            Ok(Some("<p>The whole story, at length.</p>".into())),
+        );
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains("Article · full text") && screen.contains("The whole story"),
+            "{screen}"
+        );
+
+        press(&mut app, KeyCode::Char('t'));
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains("Hello world") && !screen.contains("full text ─"),
+            "{screen}"
+        );
+
+        press(&mut app, KeyCode::Char('t'));
+        assert!(
+            app.extracting.is_none(),
+            "the full text is kept, not fetched again"
+        );
+        assert!(render(&mut app, 100).contains("The whole story"));
+
+        app.extracted("b".into(), Ok(None));
+        assert_eq!(app.status, "No full text found for this article");
     }
 
     fn tempfile_dir() -> tempfile::TempDir {

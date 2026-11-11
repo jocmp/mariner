@@ -1,3 +1,4 @@
+use mariner_feeds::fetch::FetchError;
 use mariner_feeds::finder::FindError;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -8,6 +9,12 @@ pub enum Error {
     Database(#[from] crate::database::Error),
     #[error(transparent)]
     Find(#[from] FindError),
+    #[error(transparent)]
+    Fetch(#[from] FetchError),
+    #[error("{url} returned HTTP {status}")]
+    Status { url: String, status: u16 },
+    #[error("couldn't extract the article: {0}")]
+    Extract(#[from] mercury_parser::Error),
 }
 
 impl From<rusqlite::Error> for Error {

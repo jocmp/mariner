@@ -202,7 +202,11 @@ fn draw_articles(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = pane("Article", app.focus == Pane::Reader);
+    let title = match &app.reader {
+        Some(reader) if reader.full_text => "Article · full text",
+        _ => "Article",
+    };
+    let block = pane(title, app.focus == Pane::Reader);
     let inner = block.inner(area);
     match &mut app.reader {
         Some(reader) => {
@@ -231,7 +235,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             "j/k move · enter read · m read/unread · s star · A all read · o browser · esc back"
         }
         Pane::Reader => {
-            "j/k/space scroll · click or L for links · m read/unread · s star · o browser · esc back"
+            "j/k/space scroll · t full text · click or L for links · m read · s star · o browser · esc back"
         }
     };
     let status = if app.is_refreshing() {

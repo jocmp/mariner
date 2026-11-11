@@ -8,6 +8,7 @@
 pub mod account;
 pub mod database;
 mod error;
+pub mod extract;
 mod model;
 mod queries;
 mod sql;
