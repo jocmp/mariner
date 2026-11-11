@@ -13,7 +13,9 @@ use mariner_feeds::finder::FoundFeed;
 use crate::database::Database;
 use std::collections::HashMap;
 
-use crate::model::{AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed};
+use crate::model::{
+    AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed, Tag,
+};
 use crate::{Result, queries, time};
 
 mod articles;
@@ -64,6 +66,11 @@ impl<F: Fetch + Send + Sync> Account<F> {
         let before = time::now() - articles::TOMBSTONE_LIFETIME;
         articles::delete_old_tombstones(&self.database, before).await?;
         Ok(self.database.optimize().await?)
+    }
+
+    /// Every tag, by name.
+    pub async fn tags(&self) -> Result<Vec<Tag>> {
+        queries::tags(&self.database).await
     }
 
     /// A page of articles in `scope`, newest first.
@@ -147,6 +154,12 @@ impl<F: Fetch + Send + Sync> Account<F> {
     /// this device, so the delegate isn't told.
     pub async fn set_sticky_full_content(&self, feed_id: &str, enabled: bool) -> Result<()> {
         feeds::set_sticky_full_content(&self.database, feed_id, enabled).await
+    }
+
+    /// Whether a tag's folder shows its feeds. This is a setting on this
+    /// device, so the delegate isn't told.
+    pub async fn set_tag_expanded(&self, name: &str, expanded: bool) -> Result<()> {
+        feeds::set_tag_expanded(&self.database, name, expanded).await
     }
 
     /// Unsubscribes, deleting the feed's articles, starred ones included.

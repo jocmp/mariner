@@ -19,6 +19,14 @@ pub struct Feed {
     pub sticky_full_content: bool,
 }
 
+/// A tag, which apps show as a folder of the feeds it's on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tag {
+    pub name: String,
+    /// Whether its folder shows its feeds.
+    pub expanded: bool,
+}
+
 /// An article as a list shows it, without its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Article {

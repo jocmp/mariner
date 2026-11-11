@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 
-use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed};
+use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, Tag};
 use crate::sql::account::{article_list, feeds, tags};
 
 /// Every feed, by title (case-insensitively).
@@ -16,7 +16,24 @@ pub(crate) async fn feeds(database: &Database) -> Result<Vec<Feed>> {
     Ok(database.read(all_feeds).await?)
 }
 
-/// A page of articles, newest first, from one feed or all of them.
+/// Every tag, by name (case-insensitively).
+pub(crate) async fn tags(database: &Database) -> Result<Vec<Tag>> {
+    Ok(database
+        .read(|connection| {
+            connection
+                .prepare_cached(tags::SELECT_TAGS)?
+                .query_map([], |row| {
+                    Ok(Tag {
+                        name: row.get(0)?,
+                        expanded: row.get(1)?,
+                    })
+                })?
+                .collect()
+        })
+        .await?)
+}
+
+/// A page of articles in `scope`, newest first.
 pub(crate) async fn articles(
     database: &Database,
     filter: ArticleFilter,

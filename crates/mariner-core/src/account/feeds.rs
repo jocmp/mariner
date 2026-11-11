@@ -89,6 +89,22 @@ pub(super) async fn set_sticky_full_content(
     Ok(())
 }
 
+pub(super) async fn set_tag_expanded(
+    database: &Database,
+    name: &str,
+    expanded: bool,
+) -> Result<()> {
+    let name = name.to_string();
+    database
+        .write(move |connection| {
+            connection
+                .prepare_cached(tags::UPDATE_TAG_EXPANDED)?
+                .execute(params![name, expanded])
+        })
+        .await?;
+    Ok(())
+}
+
 /// Renames a tag on every feed. A feed that already has the new tag keeps
 /// one tagging.
 pub(super) async fn rename_tag(database: &Database, old_name: &str, new_name: &str) -> Result<()> {

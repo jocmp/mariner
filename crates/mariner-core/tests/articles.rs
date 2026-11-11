@@ -214,3 +214,20 @@ fn remembers_whether_a_feed_opens_in_full_text() {
         assert_eq!(sticky, ["News"]);
     });
 }
+
+#[test]
+fn remembers_whether_a_folder_is_expanded() {
+    block_on(async {
+        let (_dir, account, news) = two_feeds().await;
+        account
+            .update_feed(&news, &news.title, &["Daily".to_string()])
+            .await
+            .unwrap();
+        let tags = account.tags().await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert!(!tags[0].expanded, "folders start collapsed");
+
+        account.set_tag_expanded("Daily", true).await.unwrap();
+        assert!(account.tags().await.unwrap()[0].expanded);
+    });
+}

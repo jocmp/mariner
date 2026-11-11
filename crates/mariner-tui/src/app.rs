@@ -1,6 +1,6 @@
 //! The interactive reader: state, keys, and the event loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,6 +71,8 @@ pub struct App<'a> {
     /// The feeds pane's rows: every feed, then each folder with its feeds,
     /// then feeds in no folder.
     pub rows: Vec<Row>,
+    /// Folders that show their feeds.
+    pub expanded: HashSet<String>,
     pub feed_list: ListState,
     pub filter: ArticleFilter,
     pub articles: Vec<Article>,
@@ -155,6 +157,7 @@ impl<'a> App<'a> {
             feeds: Vec::new(),
             unread: HashMap::new(),
             rows: vec![Row::All],
+            expanded: HashSet::new(),
             feed_list: ListState::default().with_selected(Some(0)),
             filter: ArticleFilter::Unread,
             articles: Vec::new(),
@@ -265,6 +268,7 @@ impl<'a> App<'a> {
                 KeyCode::Char('e') => return self.ask_rename(),
                 KeyCode::Char('d') => return self.ask_remove(),
                 KeyCode::Char('M') => return self.ask_move(),
+                KeyCode::Char('z') => return self.toggle_folder(),
                 _ => {}
             }
         }
@@ -381,11 +385,34 @@ impl<'a> App<'a> {
         if let Ok(unread) = self.runtime.block_on(self.account.unread_counts()) {
             self.unread = unread;
         }
-        self.rows = rows(&self.feeds);
+        match self.runtime.block_on(self.account.tags()) {
+            Ok(tags) => {
+                self.expanded = tags
+                    .into_iter()
+                    .filter(|tag| tag.expanded)
+                    .map(|tag| tag.name)
+                    .collect();
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+        self.rows = rows(&self.feeds, &self.expanded);
+        // A feed in a folder that closed leaves its folder selected.
+        let folder = match &selected {
+            Row::Feed {
+                folder: Some(folder),
+                ..
+            } => Some(Row::Folder(folder.clone())),
+            _ => None,
+        };
         let row = self
             .rows
             .iter()
             .position(|row| *row == selected)
+            .or_else(|| {
+                self.rows
+                    .iter()
+                    .position(|row| Some(row) == folder.as_ref())
+            })
             .unwrap_or(0);
         self.feed_list.select(Some(row));
         self.load_articles();
@@ -904,7 +931,26 @@ impl<'a> App<'a> {
         self.reload();
     }
 
-    /// Puts a feed in one folder, or in none.
+    /// Opens or closes the selected folder.
+    fn toggle_folder(&mut self) {
+        if let Row::Folder(name) = self.selected_row().clone() {
+            let expanded = !self.expanded.contains(&name);
+            self.set_folder_expanded(&name, expanded);
+            self.reload();
+        }
+    }
+
+    fn set_folder_expanded(&mut self, name: &str, expanded: bool) {
+        let result = self
+            .runtime
+            .block_on(self.account.set_tag_expanded(name, expanded));
+        if let Err(error) = result {
+            self.status = error.to_string();
+        }
+    }
+
+    /// Puts a feed in one folder, or in none, opening the folder so the
+    /// feed stays in sight.
     fn move_feed(&mut self, feed_id: String, folder: Option<String>) {
         self.dialog = None;
         let Some(feed) = self.feed(&feed_id).cloned() else {
@@ -916,6 +962,9 @@ impl<'a> App<'a> {
             .block_on(self.account.update_feed(&feed, &feed.title, &tags));
         match result {
             Ok(_) => {
+                if let Some(folder) = &folder {
+                    self.set_folder_expanded(folder, true);
+                }
                 self.status = match &folder {
                     Some(folder) => format!("Moved {} to {folder}", feed.title),
                     None => format!("Moved {} out of its folder", feed.title),
@@ -961,7 +1010,11 @@ impl<'a> App<'a> {
         match pane {
             Pane::Feeds => {
                 let index = self.feed_list.offset() + usize::from(y);
-                if index < self.rows.len() && Some(index) != self.feed_list.selected() {
+                let on_arrow = x < 2 && matches!(self.rows.get(index), Some(Row::Folder(_)));
+                if on_arrow {
+                    self.feed_list.select(Some(index));
+                    self.toggle_folder();
+                } else if index < self.rows.len() && Some(index) != self.feed_list.selected() {
                     self.feed_list.select(Some(index));
                     self.article_list.select(None);
                     self.load_articles();
@@ -1022,15 +1075,18 @@ impl<'a> App<'a> {
     }
 }
 
-/// The feeds pane's rows: every feed, each folder followed by its feeds,
-/// then the feeds in no folder. A feed with several tags is under each.
-fn rows(feeds: &[Feed]) -> Vec<Row> {
+/// The feeds pane's rows: every feed, each folder followed by its feeds
+/// when it's open, then the feeds in no folder. A feed with several tags is under each.
+fn rows(feeds: &[Feed], expanded: &HashSet<String>) -> Vec<Row> {
     let mut folders: Vec<&String> = feeds.iter().flat_map(|feed| &feed.tag_names).collect();
     folders.sort_by_key(|name| name.to_lowercase());
     folders.dedup();
     let mut rows = vec![Row::All];
     for folder in folders {
         rows.push(Row::Folder(folder.clone()));
+        if !expanded.contains(folder) {
+            continue;
+        }
         rows.extend(
             feeds
                 .iter()
@@ -1526,6 +1582,15 @@ mod tests {
 
         press(&mut app, KeyCode::Char('k'));
         assert_eq!(app.articles.len(), 2, "a folder lists its feeds' articles");
+
+        press(&mut app, KeyCode::Char('z'));
+        let screen = render(&mut app, 140);
+        assert!(
+            screen.contains("▸ News 2") && !screen.contains("Example Site 2"),
+            "{screen}"
+        );
+        press(&mut app, KeyCode::Char('z'));
+        assert!(render(&mut app, 140).contains("▾ News 2"));
 
         press(&mut app, KeyCode::Char('d'));
         assert!(render(&mut app, 140).contains("Its feeds stay"));

@@ -200,7 +200,12 @@ fn draw_feeds(frame: &mut Frame, app: &mut App, area: Rect) {
                     .filter(|feed| feed.tag_names.contains(name))
                     .map(|feed| unread(&feed.id))
                     .sum();
-                row(&format!("▾ {name}"), count)
+                let arrow = if app.expanded.contains(name) {
+                    "▾"
+                } else {
+                    "▸"
+                };
+                row(&format!("{arrow} {name}"), count)
             }
             Row::Feed { id, folder } => {
                 let indent = if folder.is_some() { "  " } else { "" };
@@ -291,7 +296,7 @@ fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let keys = match app.focus {
         Pane::Feeds => {
-            "j/k move · enter open · a add · e rename · M move · d remove · f filter · r refresh · A all read · q quit"
+            "j/k move · enter open · a add · e rename · M move · d remove · z open/close folder · f filter · r refresh · A all read · q quit"
         }
         Pane::Articles => {
             "j/k move · enter read · m read/unread · s star · A all read · o browser · esc back"

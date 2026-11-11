@@ -1,3 +1,9 @@
+-- name: select_tags
+SELECT name, expanded FROM tags ORDER BY name COLLATE NOCASE, name;
+
+-- name: update_tag_expanded
+UPDATE tags SET expanded = ?2 WHERE name = ?1;
+
 -- name: select_feed_tag_names
 SELECT name FROM taggings WHERE feed_id = ?1 ORDER BY name;
 
