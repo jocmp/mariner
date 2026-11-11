@@ -1,0 +1,6 @@
+{
+  "search.exclude": {
+    "**/tests/fixtures/**": true,
+    "**/tests/dates/date_corpus.json": true
+  }
+}
