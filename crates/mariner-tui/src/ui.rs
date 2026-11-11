@@ -291,13 +291,13 @@ fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let keys = match app.focus {
         Pane::Feeds => {
-            "j/k move · enter open · a add · e rename · M move · d remove · C full text · f filter · r refresh · A all read · q quit"
+            "j/k move · enter open · a add · e rename · M move · d remove · f filter · r refresh · A all read · q quit"
         }
         Pane::Articles => {
             "j/k move · enter read · m read/unread · s star · A all read · o browser · esc back"
         }
         Pane::Reader => {
-            "j/k/space scroll · c full text · C always · / condense · click or L for links · m read · s star · o browser · esc back"
+            "j/k/space scroll · c full text · / condense · click or L for links · m read · s star · o browser · esc back"
         }
     };
     let status = if app.is_refreshing() {

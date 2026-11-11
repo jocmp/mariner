@@ -286,7 +286,6 @@ impl<'a> App<'a> {
             KeyCode::Char('o') => self.open_in_browser(),
             KeyCode::Char('L') => self.show_links(),
             KeyCode::Char('c') => self.toggle_full_text(),
-            KeyCode::Char('C') => self.toggle_sticky_full_text(),
             KeyCode::Char('/') => self.toggle_document(),
             _ => {}
         }
@@ -653,19 +652,44 @@ impl<'a> App<'a> {
     }
 
     /// Switches the open article between the feed's content and the full
-    /// text from its page. Asking again after a failure tries again, and
-    /// asking while it's being extracted stops waiting for it.
+    /// text from its page, and remembers the choice for its feed. Asking
+    /// again after a failure tries again, and asking while it's being
+    /// extracted stops waiting for it.
     fn toggle_full_text(&mut self) {
         let Some(reader) = &mut self.reader else {
             return;
         };
+        let feed_id = reader.article.feed_id.clone();
         let waiting = reader.wants_full_text && self.extracting.contains_key(&reader.article.id);
         if reader.full_text || waiting {
             reader.wants_full_text = false;
             self.show_content(false);
+            self.set_sticky_full_text(&feed_id, false);
             return;
         }
         self.request_full_text();
+        self.set_sticky_full_text(&feed_id, true);
+    }
+
+    /// Stores whether a feed's articles open in full text, when it changed.
+    fn set_sticky_full_text(&mut self, feed_id: &str, enabled: bool) {
+        if self
+            .feed(feed_id)
+            .is_none_or(|feed| feed.sticky_full_content == enabled)
+        {
+            return;
+        }
+        let result = self
+            .runtime
+            .block_on(self.account.set_sticky_full_content(feed_id, enabled));
+        match result {
+            Ok(()) => {
+                if let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) {
+                    feed.sticky_full_content = enabled;
+                }
+            }
+            Err(error) => self.status = error.to_string(),
+        }
     }
 
     /// Shows the open article's full text, extracting it in the background
@@ -721,43 +745,6 @@ impl<'a> App<'a> {
         self.full_texts.insert(id, full_text);
         if waiting && found {
             self.show_content(true);
-        }
-    }
-
-    /// Turns opening in full text on or off for the current feed: the
-    /// selected one in the feeds pane, or else the current article's.
-    fn toggle_sticky_full_text(&mut self) {
-        let feed_id = match self.focus {
-            Pane::Feeds => self.selected_feed().map(|feed| feed.id.clone()),
-            Pane::Articles | Pane::Reader => self
-                .current_article()
-                .map(|article| article.feed_id.clone()),
-        };
-        let Some(feed) = feed_id.and_then(|id| self.feed(&id)).cloned() else {
-            self.status = "Select a feed or an article first".into();
-            return;
-        };
-        let enabled = !feed.sticky_full_content;
-        let result = self
-            .runtime
-            .block_on(self.account.set_sticky_full_content(&feed.id, enabled));
-        if let Err(error) = result {
-            self.status = error.to_string();
-            return;
-        }
-        if let Some(listed) = self.feeds.iter_mut().find(|listed| listed.id == feed.id) {
-            listed.sticky_full_content = enabled;
-        }
-        self.status = if enabled {
-            format!("{} opens in full text; C to stop", feed.title)
-        } else {
-            format!("{} opens in the feed's content", feed.title)
-        };
-        let reading = self.reader.as_ref().is_some_and(|reader| {
-            reader.article.feed_id == feed.id && !reader.full_text && !reader.wants_full_text
-        });
-        if enabled && reading {
-            self.request_full_text();
         }
     }
 
@@ -1474,33 +1461,34 @@ mod tests {
     }
 
     #[test]
-    fn opens_a_sticky_feeds_articles_in_full_text() {
+    fn remembers_full_text_for_the_feed() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
         let mut app = app(&runtime, dir.path());
-        app.full_texts.insert(
-            "a".into(),
-            FullText::Found("<p>The whole story.</p>".into()),
-        );
+        for (id, html) in [("a", "<p>The whole story.</p>"), ("b", "<p>All of it.</p>")] {
+            app.full_texts
+                .insert(id.into(), FullText::Found(html.into()));
+        }
 
-        press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Char('C'));
-        assert_eq!(app.status, "Example Feed opens in full text; C to stop");
+        app.open_article();
+        press(&mut app, KeyCode::Char('c'));
         app.reload();
         assert!(app.feeds[0].sticky_full_content, "it's stored");
 
-        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         let screen = render(&mut app, 100);
         assert!(
-            screen.contains("Article · full text") && screen.contains("The whole story."),
+            screen.contains("Article · full text") && screen.contains("All of it."),
             "{screen}"
         );
 
         press(&mut app, KeyCode::Char('c'));
+        assert!(render(&mut app, 100).contains("Bye."));
         assert!(
-            render(&mut app, 100).contains("Hello world"),
-            "c still switches"
+            !app.feeds[0].sticky_full_content,
+            "switching back forgets it"
         );
     }
 
