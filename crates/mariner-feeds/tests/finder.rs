@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use mariner_feeds::fetch::{Fetch, FetchError, Request, Response};
 use mariner_feeds::finder::{
-    BodyLinks, Fetch, FetchError, FindError, Guess, KnownPattern, MetaLinks, Response, Source, Xml,
-    find, find_options,
+    BodyLinks, FindError, Guess, KnownPattern, MetaLinks, Source, Xml, find, find_options,
 };
 
 const ATOM: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -227,6 +227,7 @@ mod known_pattern {
                 status: 200,
                 headers: vec![("server".into(), "Mastodon".into())],
                 body: HTML.into(),
+                redirects: Vec::new(),
             },
         );
         let response = stub.download("https://example.social/@someone").await;
@@ -334,6 +335,7 @@ mod feed_finder {
             url: "https://example.com/".into(),
             status: 200,
             headers: Vec::new(),
+            redirects: Vec::new(),
             body: br#"<link rel="alternate" type="application/rss+xml" href="/rss.xml">
                       <a href="/atom">Atom</a>"#
                 .to_vec(),
@@ -358,8 +360,8 @@ mod feed_finder {
     struct SendStub;
 
     impl Fetch for SendStub {
-        async fn fetch(&self, url: &str) -> Result<Response, FetchError> {
-            Err(FetchError::Request(url.to_string()))
+        async fn fetch(&self, request: &Request) -> Result<Response, FetchError> {
+            Err(FetchError::Request(request.url.clone()))
         }
     }
 }
@@ -389,6 +391,7 @@ impl Stub {
                 status: 200,
                 headers: Vec::new(),
                 body: body.as_bytes().to_vec(),
+                redirects: Vec::new(),
             },
         );
         self
@@ -396,13 +399,13 @@ impl Stub {
 
     /// Fetches `url` the way a source receives it.
     async fn download(&self, url: &str) -> Response {
-        self.fetch(url).await.unwrap()
+        self.fetch(&Request::get(url)).await.unwrap()
     }
 }
 
 impl Fetch for Stub {
-    async fn fetch(&self, url: &str) -> Result<Response, FetchError> {
-        let url = normalize(url);
+    async fn fetch(&self, request: &Request) -> Result<Response, FetchError> {
+        let url = normalize(&request.url);
         self.requested.lock().unwrap().push(url.clone());
         Ok(self.responses.get(&url).cloned().unwrap_or(Response {
             url,

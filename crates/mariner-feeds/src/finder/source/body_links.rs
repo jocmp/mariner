@@ -1,5 +1,5 @@
 use super::{Source, document, join_url};
-use crate::finder::Response;
+use crate::fetch::Response;
 
 /// The first four `<a>` links whose URL mentions `feed`, `xml`, `rss` or
 /// `atom`.

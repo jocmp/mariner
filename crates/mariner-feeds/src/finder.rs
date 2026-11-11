@@ -15,16 +15,12 @@
 
 use url::Url;
 
-use crate::{Feed, parse_with_charset};
+use crate::Feed;
+use crate::fetch::{Fetch, FetchError, Request, Response};
 
 pub mod source;
 
 pub use source::{BodyLinks, Guess, KnownPattern, MetaLinks, Source, Xml};
-
-#[cfg(feature = "fetch")]
-mod http;
-#[cfg(feature = "fetch")]
-pub use http::HttpFetcher;
 
 /// A feed found for a URL.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,53 +28,6 @@ pub struct FoundFeed {
     /// The URL the feed was fetched from, after redirects.
     pub url: String,
     pub feed: Feed,
-}
-
-/// A fetched response.
-#[derive(Debug, Clone, Default)]
-pub struct Response {
-    /// The final URL, after redirects.
-    pub url: String,
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-}
-
-impl Response {
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
-    }
-
-    /// The `charset` parameter of the `Content-Type` header.
-    pub fn charset(&self) -> Option<&str> {
-        let content_type = self.header("content-type")?;
-        content_type.split(';').skip(1).find_map(|parameter| {
-            let (key, value) = parameter.split_once('=')?;
-            key.trim()
-                .eq_ignore_ascii_case("charset")
-                .then(|| value.trim().trim_matches('"'))
-        })
-    }
-
-    /// The body as a feed, when it is one.
-    pub fn feed(&self) -> Option<Feed> {
-        parse_with_charset(&self.body, self.charset()).ok()
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum FetchError {
-    #[error("{0}")]
-    Request(String),
-}
-
-/// Fetches URLs for the finder, following redirects. Futures must be
-/// `Send`, so callers can await them on any thread.
-pub trait Fetch {
-    fn fetch(&self, url: &str) -> impl Future<Output = Result<Response, FetchError>> + Send;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,13 +46,13 @@ pub enum FindError {
 pub async fn find(fetcher: &impl Fetch, url: &str) -> Result<Vec<FoundFeed>, FindError> {
     let url = clean_url(url).ok_or_else(|| FindError::InvalidUrl(url.to_string()))?;
     let response = fetcher
-        .fetch(&url)
+        .fetch(&Request::get(&url))
         .await
         .map_err(|source| FindError::Fetch {
             url: url.clone(),
             source,
         })?;
-    if !(200..300).contains(&response.status) {
+    if !response.is_success() {
         return Err(FindError::Status {
             url,
             status: response.status,

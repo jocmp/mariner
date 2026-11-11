@@ -2,7 +2,8 @@
 //!
 //! `cargo run -p mariner-feeds --example find -- <url>`
 
-use mariner_feeds::finder::{HttpFetcher, find};
+use mariner_feeds::fetch::HttpFetcher;
+use mariner_feeds::finder::find;
 
 #[tokio::main]
 async fn main() {

@@ -1,11 +1,20 @@
 //! The delegate of an account that lives only on this device: it finds and
 //! fetches feeds itself, and has nothing to tell a service about changes.
 
-use mariner_feeds::finder::{self, Fetch, FoundFeed};
+use mariner_feeds::fetch::Fetch;
+use mariner_feeds::finder::{self, FoundFeed};
+
+use chrono::{DateTime, Utc};
 
 use super::{Account, AccountDelegate, Status};
 use crate::Result;
 use crate::model::{AddFeedResult, Feed, FeedChoice};
+
+mod crawl_data;
+mod redirect_cache;
+mod refresher;
+
+use refresher::LocalAccountRefresher;
 
 pub(super) struct LocalAccountDelegate<F> {
     fetcher: F,
@@ -35,6 +44,14 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
                 found.into_iter().map(choice).collect(),
             )),
         }
+    }
+
+    /// Fetches every feed that isn't backing off. Local articles start
+    /// unread, so none would be pruned right away: `cutoff` isn't needed.
+    async fn refresh(&self, account: &Account<F>, _cutoff: Option<DateTime<Utc>>) -> Result<()> {
+        LocalAccountRefresher::new(&self.fetcher)
+            .refresh(account)
+            .await
     }
 
     async fn set_status(&self, _: &Account<F>, _: &[String], _: Status) -> Result<()> {

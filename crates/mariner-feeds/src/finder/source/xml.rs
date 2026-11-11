@@ -1,5 +1,6 @@
 use super::Source;
-use crate::finder::{Fetch, FoundFeed, Response};
+use crate::fetch::{Fetch, Response};
+use crate::finder::FoundFeed;
 
 /// The response itself, when it's a feed.
 pub struct Xml;

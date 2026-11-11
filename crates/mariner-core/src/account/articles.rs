@@ -1,10 +1,12 @@
-//! Storing parsed entries as articles.
+//! Storing parsed entries as articles, and pruning old ones.
 
 use std::collections::HashSet;
 
 use mariner_feeds::Entry;
 use rusqlite::{Transaction, params};
 
+use crate::Result;
+use crate::database::Database;
 use crate::sql::account::articles;
 
 /// Inserts each new entry of the feed subscribed at `feed_url` as an
@@ -62,6 +64,19 @@ pub(super) fn insert(
         }
     }
     Ok(inserted)
+}
+
+/// Deletes read, unstarred articles stored before `before` (Unix
+/// seconds). Their statuses stay, so refresh doesn't add them again.
+pub(super) async fn prune(database: &Database, before: i64) -> Result<()> {
+    database
+        .write(move |connection| {
+            connection
+                .prepare_cached(articles::DELETE_READ_ARTICLES_BEFORE)?
+                .execute([before])
+        })
+        .await?;
+    Ok(())
 }
 
 /// The content, or else the summary, ignoring blank ones.

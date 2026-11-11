@@ -1,7 +1,7 @@
 use url::Url;
 
 use super::Source;
-use crate::finder::Response;
+use crate::fetch::Response;
 
 /// `/rss` and `/feed` on the response's host.
 pub struct Guess;

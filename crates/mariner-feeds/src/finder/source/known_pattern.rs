@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::{Source, document};
-use crate::finder::Response;
+use crate::fetch::Response;
 
 /// Feeds at known URLs: YouTube channels, users and playlists, subreddits,
 /// Vimeo users and GitHub discussions; else a YouTube page's channel id;

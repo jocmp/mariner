@@ -1216,6 +1216,7 @@ dependencies = [
  "chrono",
  "futures-channel",
  "futures-executor",
+ "futures-util",
  "mariner-feeds",
  "mercury-parser",
  "refinery",

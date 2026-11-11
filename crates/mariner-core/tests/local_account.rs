@@ -1,11 +1,10 @@
 //! A local account against stubbed fetches, driven without an async runtime.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
+use common::{Network, local_account};
 use futures_executor::block_on;
-use mariner_core::{Account, AddFeedResult, Database, Feed, Kind};
-use mariner_feeds::finder::{Fetch, FetchError, Response};
+use mariner_core::{Account, AddFeedResult, Feed};
+
+mod common;
 
 const FEED_URL: &str = "https://example.com/feed.xml";
 
@@ -38,7 +37,8 @@ const RSS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 #[test]
 fn adds_a_feed_with_its_articles() {
     block_on(async {
-        let (_dir, account, stub) = local_account(Stub::default().with(FEED_URL, RSS)).await;
+        let network = Network::default().with(FEED_URL, RSS);
+        let (_dir, account) = local_account(&network).await;
         let feed = added(account.add_feed(FEED_URL, None, None).await.unwrap());
 
         assert_eq!(feed.title, "Example");
@@ -49,7 +49,7 @@ fn adds_a_feed_with_its_articles() {
             Some("https://example.com/cover.jpg")
         );
         assert_eq!(account.feeds().await.unwrap(), std::slice::from_ref(&feed));
-        assert_eq!(stub.requests(), [FEED_URL]);
+        assert_eq!(network.requested_urls(), [FEED_URL]);
 
         let articles = articles(&account).await;
         let first = mariner_feeds::Entry {
@@ -91,7 +91,7 @@ fn adds_a_feed_with_its_articles() {
 #[test]
 fn uses_the_given_title_and_tags() {
     block_on(async {
-        let (_dir, account, _) = local_account(Stub::default().with(FEED_URL, RSS)).await;
+        let (_dir, account) = local_account(&Network::default().with(FEED_URL, RSS)).await;
         let tags = vec!["News".to_string(), " ".to_string(), "Audio".to_string()];
         let feed = added(
             account
@@ -107,7 +107,8 @@ fn uses_the_given_title_and_tags() {
 #[test]
 fn finds_an_existing_feed_without_fetching() {
     block_on(async {
-        let (_dir, account, stub) = local_account(Stub::default().with(FEED_URL, RSS)).await;
+        let network = Network::default().with(FEED_URL, RSS);
+        let (_dir, account) = local_account(&network).await;
         let first = added(account.add_feed(FEED_URL, None, None).await.unwrap());
         let again = added(
             account
@@ -116,7 +117,7 @@ fn finds_an_existing_feed_without_fetching() {
                 .unwrap(),
         );
         assert_eq!(first, again);
-        assert_eq!(stub.requests(), [FEED_URL]);
+        assert_eq!(network.requested_urls(), [FEED_URL]);
     });
 }
 
@@ -125,14 +126,14 @@ fn offers_choices_when_a_page_has_several_feeds() {
     block_on(async {
         let page = r#"<link rel="alternate" type="application/rss+xml" href="/feed.xml">
                       <link rel="alternate" type="application/rss+xml" href="/comments.xml">"#;
-        let stub = Stub::default()
+        let stub = Network::default()
             .with("https://example.com/", page)
             .with(FEED_URL, RSS)
             .with(
                 "https://example.com/comments.xml",
                 &RSS.replace("Example", "Comments"),
             );
-        let (_dir, account, _) = local_account(stub).await;
+        let (_dir, account) = local_account(&stub).await;
         let AddFeedResult::Choices(choices) = account
             .add_feed("https://example.com/", None, None)
             .await
@@ -158,8 +159,8 @@ fn offers_choices_when_a_page_has_several_feeds() {
 #[test]
 fn reports_a_page_without_feeds() {
     block_on(async {
-        let stub = Stub::default().with("https://example.com/", "<html><body>Hi</body></html>");
-        let (_dir, account, _) = local_account(stub).await;
+        let stub = Network::default().with("https://example.com/", "<html><body>Hi</body></html>");
+        let (_dir, account) = local_account(&stub).await;
         let result = account
             .add_feed("https://example.com/", None, None)
             .await
@@ -171,7 +172,7 @@ fn reports_a_page_without_feeds() {
 #[test]
 fn marks_articles_read_and_starred() {
     block_on(async {
-        let (_dir, account, _) = local_account(Stub::default().with(FEED_URL, RSS)).await;
+        let (_dir, account) = local_account(&Network::default().with(FEED_URL, RSS)).await;
         account.add_feed(FEED_URL, None, None).await.unwrap();
         let ids: Vec<String> = articles(&account).await.into_iter().map(|a| a.id).collect();
 
@@ -203,7 +204,7 @@ fn marks_articles_read_and_starred() {
 #[test]
 fn updates_a_feed() {
     block_on(async {
-        let (_dir, account, _) = local_account(Stub::default().with(FEED_URL, RSS)).await;
+        let (_dir, account) = local_account(&Network::default().with(FEED_URL, RSS)).await;
         let feed = added(
             account
                 .add_feed(FEED_URL, None, Some(&["Old".to_string()]))
@@ -224,8 +225,8 @@ fn updates_a_feed() {
 fn renames_and_removes_tags() {
     block_on(async {
         let other = "https://example.com/other.xml";
-        let stub = Stub::default().with(FEED_URL, RSS).with(other, RSS);
-        let (_dir, account, _) = local_account(stub).await;
+        let stub = Network::default().with(FEED_URL, RSS).with(other, RSS);
+        let (_dir, account) = local_account(&stub).await;
         account
             .add_feed(
                 FEED_URL,
@@ -264,7 +265,7 @@ fn renames_and_removes_tags() {
 #[test]
 fn removing_a_feed_removes_its_articles_and_statuses() {
     block_on(async {
-        let (_dir, account, _) = local_account(Stub::default().with(FEED_URL, RSS)).await;
+        let (_dir, account) = local_account(&Network::default().with(FEED_URL, RSS)).await;
         let feed = added(account.add_feed(FEED_URL, None, None).await.unwrap());
         let ids: Vec<String> = articles(&account).await.into_iter().map(|a| a.id).collect();
         account.add_star(&ids).await.unwrap();
@@ -302,7 +303,7 @@ struct Article {
     starred: bool,
 }
 
-async fn articles(account: &Account<Shared>) -> Vec<Article> {
+async fn articles(account: &Account<Network>) -> Vec<Article> {
     account
         .database()
         .read(|connection| {
@@ -329,7 +330,7 @@ async fn articles(account: &Account<Shared>) -> Vec<Article> {
         .unwrap()
 }
 
-async fn enclosures(account: &Account<Shared>) -> Vec<(String, String, Option<i64>)> {
+async fn enclosures(account: &Account<Network>) -> Vec<(String, String, Option<i64>)> {
     account
         .database()
         .read(|connection| {
@@ -342,7 +343,7 @@ async fn enclosures(account: &Account<Shared>) -> Vec<(String, String, Option<i6
         .unwrap()
 }
 
-async fn status_count(account: &Account<Shared>) -> i64 {
+async fn status_count(account: &Account<Network>) -> i64 {
     account
         .database()
         .read(|connection| {
@@ -352,55 +353,4 @@ async fn status_count(account: &Account<Shared>) -> i64 {
         })
         .await
         .unwrap()
-}
-
-async fn local_account(stub: Stub) -> (tempfile::TempDir, Account<Shared>, Arc<Stub>) {
-    let dir = tempfile::tempdir().unwrap();
-    let database = Database::open(dir.path().join("local.db"), Kind::Account)
-        .await
-        .unwrap();
-    let stub = Arc::new(stub);
-    let account = Account::local(database, Shared(Arc::clone(&stub)));
-    (dir, account, stub)
-}
-
-/// The account's handle on a stub the test also inspects.
-struct Shared(Arc<Stub>);
-
-/// Serves registered bodies with status 200, and 404 for anything else.
-#[derive(Default)]
-struct Stub {
-    responses: HashMap<String, String>,
-    requested: Mutex<Vec<String>>,
-}
-
-impl Stub {
-    fn with(mut self, url: &str, body: &str) -> Self {
-        self.responses.insert(url.to_string(), body.to_string());
-        self
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.requested.lock().unwrap().clone()
-    }
-}
-
-impl Fetch for Shared {
-    async fn fetch(&self, url: &str) -> Result<Response, FetchError> {
-        let stub = &self.0;
-        stub.requested.lock().unwrap().push(url.to_string());
-        Ok(match stub.responses.get(url) {
-            Some(body) => Response {
-                url: url.to_string(),
-                status: 200,
-                headers: Vec::new(),
-                body: body.clone().into_bytes(),
-            },
-            None => Response {
-                url: url.to_string(),
-                status: 404,
-                ..Response::default()
-            },
-        })
-    }
 }

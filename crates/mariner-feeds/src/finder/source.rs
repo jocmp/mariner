@@ -3,7 +3,8 @@
 
 use url::Url;
 
-use super::{Fetch, FoundFeed, Response};
+use super::FoundFeed;
+use crate::fetch::{Fetch, Request, Response};
 
 mod body_links;
 mod guess;
@@ -39,10 +40,10 @@ async fn fetch_feeds(fetcher: &impl Fetch, urls: Vec<String>) -> Vec<FoundFeed> 
             continue;
         }
         tried.push(url.clone());
-        let Ok(response) = fetcher.fetch(&url).await else {
+        let Ok(response) = fetcher.fetch(&Request::get(&url)).await else {
             continue;
         };
-        if !(200..300).contains(&response.status) {
+        if !response.is_success() {
             continue;
         }
         if let Some(feed) = response.feed()

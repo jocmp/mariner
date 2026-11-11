@@ -1,5 +1,5 @@
 use super::{Source, document, join_url};
-use crate::finder::Response;
+use crate::fetch::Response;
 
 /// `<link rel="alternate">` tags with a feed type.
 pub struct MetaLinks;

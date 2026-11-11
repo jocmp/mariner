@@ -6,7 +6,9 @@
 //! feeds, fetching them, telling a sync service about changes) it reaches
 //! out to its delegate.
 
-use mariner_feeds::finder::{Fetch, FoundFeed};
+use chrono::{DateTime, Utc};
+use mariner_feeds::fetch::Fetch;
+use mariner_feeds::finder::FoundFeed;
 
 use crate::database::Database;
 use crate::model::{AddFeedResult, Feed};
@@ -27,6 +29,13 @@ pub struct Account<F> {
     delegate: Delegate<F>,
 }
 
+impl<F> Account<F> {
+    /// The account's database, for queries core doesn't offer yet.
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
+}
+
 impl<F: Fetch + Send + Sync> Account<F> {
     /// An account that lives only on this device, backed by `database`
     /// (opened as [`Kind::Account`]) and fetching with `fetcher`.
@@ -39,14 +48,19 @@ impl<F: Fetch + Send + Sync> Account<F> {
         }
     }
 
-    /// The account's database, for queries core doesn't offer yet.
-    pub fn database(&self) -> &Database {
-        &self.database
-    }
-
     /// Every subscribed feed, by title.
     pub async fn feeds(&self) -> Result<Vec<Feed>> {
         queries::feeds(&self.database).await
+    }
+
+    /// Fetches new articles, then prunes read, unstarred articles stored
+    /// before `cutoff`.
+    pub async fn refresh(&self, cutoff: Option<DateTime<Utc>>) -> Result<()> {
+        self.delegate.refresh(self, cutoff).await?;
+        if let Some(cutoff) = cutoff {
+            articles::prune(&self.database, cutoff.timestamp()).await?;
+        }
+        Ok(())
     }
 
     pub async fn mark_read(&self, article_ids: &[String]) -> Result<()> {
@@ -138,6 +152,12 @@ enum Delegate<F> {
 }
 
 impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
+    async fn refresh(&self, account: &Account<F>, cutoff: Option<DateTime<Utc>>) -> Result<()> {
+        match self {
+            Delegate::Local(delegate) => delegate.refresh(account, cutoff).await,
+        }
+    }
+
     async fn add_feed(
         &self,
         account: &Account<F>,
@@ -202,6 +222,15 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
 /// outbox (`article_sync_statuses`) here and pushes the outbox at the
 /// start of its next refresh, before pulling, so local changes win.
 pub(crate) trait AccountDelegate<F> {
+    /// Brings in new articles. `cutoff` is when the account will prune
+    /// read articles to, so a sync account can skip storing ones it would
+    /// prune right away.
+    fn refresh(
+        &self,
+        account: &Account<F>,
+        cutoff: Option<DateTime<Utc>>,
+    ) -> impl Future<Output = Result<()>> + Send;
+
     /// Finds what `url` leads to, subscribing through
     /// [`Account::subscribe`] when it's one feed.
     fn add_feed(
