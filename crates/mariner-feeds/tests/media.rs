@@ -22,6 +22,8 @@ fn reads_grouped_media_rss() {
                 duration: Some("61".into()),
                 title: Some("Clip title".into()),
                 description: Some("Clip description".into()),
+                group: Some(0),
+                is_default: false,
             },
             MediaContent {
                 url: "https://example.org/clip.mp3".into(),
@@ -33,6 +35,8 @@ fn reads_grouped_media_rss() {
                 duration: None,
                 title: None,
                 description: None,
+                group: Some(0),
+                is_default: false,
             },
         ],
         "a media:content without a url is skipped"
@@ -49,6 +53,27 @@ fn reads_grouped_media_rss() {
     assert_eq!(media.views.as_deref(), Some("345"));
 
     assert_eq!(entries[1].media, None);
+}
+
+#[test]
+fn numbers_groups_and_marks_defaults() {
+    let media = entries("media-groups.xml")[0].media.clone().unwrap();
+    let contents: Vec<_> = media
+        .contents
+        .iter()
+        .map(|content| (content.url.as_str(), content.group, content.is_default))
+        .collect();
+    assert_eq!(
+        contents,
+        [
+            ("https://example.org/a-1080.mp4", Some(0), false),
+            ("https://example.org/a-480.mp4", Some(0), true),
+            ("https://example.org/b.webm", Some(1), true),
+            ("https://example.org/b.mp4", Some(1), false),
+            ("https://example.org/poster.jpg", None, false),
+        ]
+    );
+    assert_eq!(media.title.as_deref(), Some("Second video"));
 }
 
 #[test]

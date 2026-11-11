@@ -97,8 +97,9 @@ fn document(feed: &mariner_feeds::Feed, base_url: &str) -> Value {
 }
 
 /// Removes what the parser reads beyond the reference: every entry's
-/// `enclosures`, and `media` wherever the reference has none (it reads
-/// Media RSS only for YouTube entries).
+/// `enclosures`, `media` wherever the reference has none (it reads Media
+/// RSS only for YouTube entries), and each media content's `group` and
+/// `is_default`.
 fn drop_unreferenced(expected: &Value, actual: &mut Value) {
     let empty = Vec::new();
     let expected_entries = expected["entries"].as_array().unwrap_or(&empty);
@@ -115,6 +116,11 @@ fn drop_unreferenced(expected: &Value, actual: &mut Value) {
             .is_none_or(|e| e["media"].is_null())
         {
             entry.remove("media");
+        } else if let Some(contents) = entry["media"]["contents"].as_array_mut() {
+            for content in contents.iter_mut().filter_map(Value::as_object_mut) {
+                content.remove("group");
+                content.remove("is_default");
+            }
         }
     }
 }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Media groups</title>
+    <link>https://example.org/</link>
+    <item>
+      <title>Two videos, two versions each</title>
+      <guid isPermaLink="false">groups-1</guid>
+      <media:group>
+        <media:content url="https://example.org/a-1080.mp4" type="video/mp4" height="1080"/>
+        <media:content url="https://example.org/a-480.mp4" type="video/mp4" height="480" isDefault="true"/>
+      </media:group>
+      <media:group>
+        <media:title>Second video</media:title>
+        <media:content url="https://example.org/b.webm" type="video/webm" isDefault="TRUE"/>
+        <media:content url="https://example.org/b.mp4" type="video/mp4" isDefault="false"/>
+      </media:group>
+      <media:content url="https://example.org/poster.jpg" type="image/jpeg"/>
+    </item>
+  </channel>
+</rss>

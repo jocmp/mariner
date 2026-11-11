@@ -9,7 +9,9 @@
 //!   `media:description` outside any `media:content` (the first one wins
 //!   even when empty, as with the rules).
 //! - Each `media:content` with a `url` becomes a content, with the first
-//!   `media:title` and `media:description` inside it.
+//!   `media:title` and `media:description` inside it, the index of the
+//!   `media:group` it's in (contents in one group are versions of the same
+//!   media) and whether it's marked `isDefault="true"`.
 //! - Every `media:thumbnail` with a `url` is listed, wherever it is.
 //! - Star ratings and views come from the first `media:starRating` and
 //!   `media:statistics`.
@@ -23,7 +25,8 @@ pub(crate) fn media(entry: &Element) -> Option<Media> {
     let mut found = false;
     let (mut title_seen, mut description_seen) = (false, false);
     let (mut rating_seen, mut statistics_seen) = (false, false);
-    visit(entry, &mut |element| {
+    let mut groups = 0;
+    visit(entry, &mut groups, None, &mut |element, group| {
         let Some(local) = element.qualified_name.strip_prefix("media:") else {
             return Visit::Descend;
         };
@@ -31,7 +34,7 @@ pub(crate) fn media(entry: &Element) -> Option<Media> {
         match local {
             "content" => {
                 if let Some(url) = element.attr("url") {
-                    media.contents.push(content(element, url));
+                    media.contents.push(content(element, url, group));
                 }
                 return Visit::Skip;
             }
@@ -71,7 +74,7 @@ pub(crate) fn media(entry: &Element) -> Option<Media> {
 /// Every RSS `<enclosure>` and Atom `<link rel="enclosure">` with a URL.
 pub(crate) fn enclosures(entry: &Element) -> Vec<Enclosure> {
     let mut enclosures = Vec::new();
-    visit(entry, &mut |element| {
+    visit(entry, &mut 0, None, &mut |element, _| {
         let url = match element.name.as_str() {
             "enclosure" => element.attr("url"),
             "link" if element.attr("rel") == Some("enclosure") => element.attr("href"),
@@ -94,22 +97,35 @@ enum Visit {
     Skip,
 }
 
-/// Calls `f` on every element below `root`, in document order, skipping
-/// the children of elements it returns `Visit::Skip` for.
-fn visit(root: &Element, f: &mut impl FnMut(&Element) -> Visit) {
+/// Calls `f` on every element below `root`, in document order, with the
+/// index of the `media:group` it's in (counted in `groups`), skipping the
+/// children of elements it returns `Visit::Skip` for.
+fn visit(
+    root: &Element,
+    groups: &mut usize,
+    group: Option<usize>,
+    f: &mut impl FnMut(&Element, Option<usize>) -> Visit,
+) {
     for node in &root.children {
-        if let Node::Element(element) = node
-            && let Visit::Descend = f(element)
-        {
-            visit(element, f);
+        let Node::Element(element) = node else {
+            continue;
+        };
+        if let Visit::Descend = f(element, group) {
+            let inner = if element.qualified_name == "media:group" {
+                *groups += 1;
+                Some(*groups - 1)
+            } else {
+                group
+            };
+            visit(element, groups, inner, f);
         }
     }
 }
 
-fn content(element: &Element, url: &str) -> MediaContent {
+fn content(element: &Element, url: &str, group: Option<usize>) -> MediaContent {
     let mut title = None;
     let mut description = None;
-    visit(element, &mut |child| {
+    visit(element, &mut 0, None, &mut |child, _| {
         match child.qualified_name.as_str() {
             "media:title" if title.is_none() => title = Some(text(child)),
             "media:description" if description.is_none() => description = Some(text(child)),
@@ -127,6 +143,10 @@ fn content(element: &Element, url: &str) -> MediaContent {
         duration: attr(element, "duration"),
         title: title.flatten(),
         description: description.flatten(),
+        group,
+        is_default: element
+            .attr("isDefault")
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("true")),
     }
 }
 

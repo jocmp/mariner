@@ -100,6 +100,13 @@ pub struct MediaContent {
     pub title: Option<String>,
     /// Often an image's alt text.
     pub description: Option<String>,
+    /// Which `media:group` of the entry this is in, counting from 0.
+    /// Contents in one group are versions of the same media (different
+    /// sizes or formats); contents in no group are separate media.
+    pub group: Option<usize>,
+    /// Marked `isDefault="true"`: the version to use when there's no other
+    /// reason to pick one.
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
