@@ -2,7 +2,8 @@
 //! (no async runtime) to show core needs none.
 
 use futures_executor::block_on;
-use mariner_core::{Database, Error, Kind};
+use mariner_core::database::Error;
+use mariner_core::{Database, Kind};
 use rusqlite::params;
 
 const ACCOUNT_TABLES: [&str; 12] = [

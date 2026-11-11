@@ -8,12 +8,15 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+chrono.workspace = true
 futures-channel.workspace = true
 mariner-feeds = { path = "../mariner-feeds", default-features = false }
 mercury-parser = { workspace = true, default-features = false }
 refinery.workspace = true
 rusqlite.workspace = true
+sha1.workspace = true
 thiserror.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 futures-executor.workspace = true

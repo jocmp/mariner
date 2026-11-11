@@ -1,7 +1,7 @@
 //! FeedFinder and each of its sources, against stubbed responses.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use mariner_feeds::finder::{
     BodyLinks, Fetch, FetchError, FindError, Guess, KnownPattern, MetaLinks, Response, Source, Xml,
@@ -300,7 +300,7 @@ mod feed_finder {
             found(&stub, "https://example.com").await,
             ["https://example.com/atom.xml"]
         );
-        let requested = stub.requested.borrow();
+        let requested = stub.requested.lock().unwrap();
         assert!(!requested.contains(&"https://example.com/rss".to_string()));
     }
 
@@ -376,7 +376,7 @@ fn urls(found: Vec<mariner_feeds::finder::FoundFeed>) -> Vec<String> {
 #[derive(Default)]
 struct Stub {
     responses: HashMap<String, Response>,
-    requested: RefCell<Vec<String>>,
+    requested: Mutex<Vec<String>>,
 }
 
 impl Stub {
@@ -403,7 +403,7 @@ impl Stub {
 impl Fetch for Stub {
     async fn fetch(&self, url: &str) -> Result<Response, FetchError> {
         let url = normalize(url);
-        self.requested.borrow_mut().push(url.clone());
+        self.requested.lock().unwrap().push(url.clone());
         Ok(self.responses.get(&url).cloned().unwrap_or(Response {
             url,
             status: 404,

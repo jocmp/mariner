@@ -75,9 +75,10 @@ pub enum FetchError {
     Request(String),
 }
 
-/// Fetches URLs for the finder, following redirects.
+/// Fetches URLs for the finder, following redirects. Futures must be
+/// `Send`, so callers can await them on any thread.
 pub trait Fetch {
-    fn fetch(&self, url: &str) -> impl Future<Output = Result<Response, FetchError>>;
+    fn fetch(&self, url: &str) -> impl Future<Output = Result<Response, FetchError>> + Send;
 }
 
 #[derive(Debug, thiserror::Error)]

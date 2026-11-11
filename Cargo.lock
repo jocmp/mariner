@@ -1213,14 +1213,17 @@ dependencies = [
 name = "mariner-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "futures-channel",
  "futures-executor",
  "mariner-feeds",
  "mercury-parser",
  "refinery",
  "rusqlite",
+ "sha1",
  "tempfile",
  "thiserror",
+ "url",
 ]
 
 [[package]]

@@ -5,6 +5,14 @@
 //! awaited from any executor: blocking work runs on core's own threads,
 //! and network access goes through a fetcher the caller provides.
 
+pub mod account;
 pub mod database;
+mod error;
+mod model;
+mod queries;
+mod time;
 
-pub use database::{Database, Error, Kind};
+pub use account::{Account, AccountDelegate, LocalAccount};
+pub use database::{Database, Kind};
+pub use error::{Error, Result};
+pub use model::{AddFeedResult, Feed, FeedChoice};
