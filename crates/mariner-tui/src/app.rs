@@ -200,7 +200,7 @@ impl<'a> App<'a> {
             KeyCode::Char('A') => self.mark_all_read(),
             KeyCode::Char('o') => self.open_in_browser(),
             KeyCode::Char('L') => self.show_links(),
-            KeyCode::Char('t') => self.toggle_full_text(),
+            KeyCode::Char('c') => self.toggle_full_text(),
             _ => {}
         }
     }
@@ -585,7 +585,7 @@ impl<'a> App<'a> {
                     self.status = "No full text found for this article".into();
                 } else if open {
                     self.show_content(true);
-                    self.status = "Showing the full text; t for the feed's".into();
+                    self.status = "Showing the full text; c for the feed's".into();
                 }
             }
             Err(error) => self.status = format!("Couldn't get the full text: {error}"),
@@ -1073,14 +1073,14 @@ mod tests {
             "{screen}"
         );
 
-        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Char('c'));
         let screen = render(&mut app, 100);
         assert!(
             screen.contains("Hello world") && !screen.contains("full text ─"),
             "{screen}"
         );
 
-        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Char('c'));
         assert!(
             app.extracting.is_none(),
             "the full text is kept, not fetched again"
