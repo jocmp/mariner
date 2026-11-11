@@ -117,10 +117,64 @@ pub fn document_parts(content: &ArticleContent) -> Vec<Part> {
             .unwrap_or_else(|error| format!("couldn't serialize: {error}")),
         Err(error) => format!("condense failed: {error}"),
     };
-    let style = Style::default().fg(Color::Gray);
     text.lines()
-        .map(|line| Part::Text(vec![Segment::plain(line, style)]))
+        .map(|line| Part::Text(highlight_json(line)))
         .collect()
+}
+
+/// One line of pretty-printed JSON, colored: keys cyan, strings green,
+/// numbers yellow, `true`/`false`/`null` magenta, punctuation dim.
+fn highlight_json(line: &str) -> Vec<Segment> {
+    let key = Style::default().fg(Color::Cyan);
+    let string = Style::default().fg(Color::Green);
+    let number = Style::default().fg(Color::Yellow);
+    let literal = Style::default().fg(Color::Magenta);
+    let punctuation = Style::default().add_modifier(Modifier::DIM);
+
+    let mut segments = Vec::new();
+    let mut rest = line;
+    while let Some(c) = rest.chars().next() {
+        let (length, style) = match c {
+            '"' => {
+                let length = string_length(rest);
+                let is_key = rest[length..].trim_start().starts_with(':');
+                (length, if is_key { key } else { string })
+            }
+            '-' | '0'..='9' => (
+                rest.find(|c: char| !matches!(c, '-' | '+' | '.' | 'e' | 'E' | '0'..='9'))
+                    .unwrap_or(rest.len()),
+                number,
+            ),
+            't' | 'f' | 'n' => (
+                rest.find(|c: char| !c.is_ascii_alphabetic())
+                    .unwrap_or(rest.len()),
+                literal,
+            ),
+            c if c.is_whitespace() => (
+                rest.find(|c: char| !c.is_whitespace())
+                    .unwrap_or(rest.len()),
+                Style::default(),
+            ),
+            c => (c.len_utf8(), punctuation),
+        };
+        segments.push(Segment::plain(&rest[..length], style));
+        rest = &rest[length..];
+    }
+    segments
+}
+
+/// The length of the JSON string at the start of `text`, quotes included.
+fn string_length(text: &str) -> usize {
+    let mut escaped = false;
+    for (index, c) in text.char_indices().skip(1) {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return index + 1,
+            _ => {}
+        }
+    }
+    text.len()
 }
 
 /// The URLs of the article's images, to fetch.
@@ -590,6 +644,33 @@ mod tests {
 
     fn images() -> Images {
         Images::new(HttpFetcher::new().unwrap())
+    }
+
+    #[test]
+    fn colors_json_by_kind() {
+        let colors: Vec<(String, Option<Color>)> =
+            highlight_json(r#"  "text": "a \"quoted\" word", "start": 12, "x": null,"#)
+                .into_iter()
+                .filter(|segment| !segment.text.trim().is_empty())
+                .map(|segment| (segment.text, segment.style.fg))
+                .collect();
+        assert_eq!(
+            colors,
+            [
+                (r#""text""#.to_string(), Some(Color::Cyan)),
+                (":".to_string(), None),
+                (r#""a \"quoted\" word""#.to_string(), Some(Color::Green)),
+                (",".to_string(), None),
+                (r#""start""#.to_string(), Some(Color::Cyan)),
+                (":".to_string(), None),
+                ("12".to_string(), Some(Color::Yellow)),
+                (",".to_string(), None),
+                (r#""x""#.to_string(), Some(Color::Cyan)),
+                (":".to_string(), None),
+                ("null".to_string(), Some(Color::Magenta)),
+                (",".to_string(), None),
+            ]
+        );
     }
 
     #[test]
