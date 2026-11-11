@@ -65,7 +65,10 @@ fn adds_a_feed_with_its_articles() {
         assert_eq!(stored.published_at, 1728123072);
         assert_eq!(stored.content_html.as_deref(), Some("Summary one"));
         assert_eq!(stored.enclosure_type.as_deref(), Some("audio/mpeg"));
-        assert!(stored.read, "published over 6 months ago, so it starts read");
+        assert!(
+            stored.read,
+            "published over 6 months ago, so it starts read"
+        );
 
         let future = articles
             .iter()
