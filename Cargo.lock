@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "mariner-condense"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "dom_query",
  "serde",
@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "mariner-core"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "chrono",
  "criterion",
@@ -1828,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "mariner-feeds"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "chrono",
  "dom_query",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "mariner-ffi"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "mariner-condense",
  "mariner-core",
@@ -1855,7 +1855,7 @@ dependencies = [
 
 [[package]]
 name = "mariner-tui"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "chrono",
  "clap",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "mercury-cli"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "clap",
  "mercury-parser",
@@ -1935,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "mercury-parser"
-version = "0.1.0"
+version = "2026.11.1001"
 dependencies = [
  "chrono",
  "chrono-tz",

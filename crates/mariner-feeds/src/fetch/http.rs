@@ -10,7 +10,11 @@ use super::{Fetch, FetchError, Redirect, Request, Response};
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Names the app and where to learn about it, as some hosts (Wikimedia,
 /// for one) require.
-const USER_AGENT: &str = "Mariner/2026.11.0001b (+https://jocmp.com)";
+const USER_AGENT: &str = concat!(
+    "Mariner/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://jocmp.com)"
+);
 /// Redirects followed before giving up.
 const MAX_REDIRECTS: usize = 10;
 
