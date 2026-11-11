@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 
-use crate::model::{Article, ArticleContent, ArticleFilter, Feed};
+use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed};
 use crate::sql::account::{article_list, feeds, tags};
 
 /// Every feed, by title (case-insensitively).
@@ -20,11 +20,11 @@ pub(crate) async fn feeds(database: &Database) -> Result<Vec<Feed>> {
 pub(crate) async fn articles(
     database: &Database,
     filter: ArticleFilter,
-    feed_id: Option<&str>,
+    scope: &ArticleScope,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<Article>> {
-    let feed_id = feed_id.map(String::from);
+    let (feed_id, tag) = scope.feed_and_tag();
     let sql = match filter {
         ArticleFilter::All => article_list::SELECT_ARTICLES,
         ArticleFilter::Unread => article_list::SELECT_UNREAD_ARTICLES,
@@ -34,7 +34,10 @@ pub(crate) async fn articles(
         .read(move |connection| {
             connection
                 .prepare_cached(sql)?
-                .query_map(params![feed_id, limit as i64, offset as i64], article_row)?
+                .query_map(
+                    params![feed_id, limit as i64, offset as i64, tag],
+                    article_row,
+                )?
                 .collect()
         })
         .await?)
@@ -70,17 +73,17 @@ pub(crate) async fn unread_counts(database: &Database) -> Result<HashMap<String,
         .await?)
 }
 
-/// Every unread article's id, from one feed or all of them.
+/// Every unread article's id in `scope`.
 pub(crate) async fn unread_article_ids(
     database: &Database,
-    feed_id: Option<&str>,
+    scope: &ArticleScope,
 ) -> Result<Vec<String>> {
-    let feed_id = feed_id.map(String::from);
+    let (feed_id, tag) = scope.feed_and_tag();
     Ok(database
         .read(move |connection| {
             connection
                 .prepare_cached(article_list::SELECT_UNREAD_ARTICLE_IDS)?
-                .query_map(params![feed_id], |row| row.get(0))?
+                .query_map(params![feed_id, tag], |row| row.get(0))?
                 .collect()
         })
         .await?)
@@ -133,6 +136,7 @@ fn feed_row(row: &Row) -> rusqlite::Result<Feed> {
         favicon_url: row.get(5)?,
         itunes_image_url: row.get(6)?,
         tag_names: Vec::new(),
+        sticky_full_content: row.get(7)?,
     })
 }
 

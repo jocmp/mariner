@@ -17,4 +17,6 @@ mod time;
 pub use account::Account;
 pub use database::{Database, Kind};
 pub use error::{Error, Result};
-pub use model::{AddFeedResult, Article, ArticleContent, ArticleFilter, Feed, FeedChoice};
+pub use model::{
+    AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice,
+};

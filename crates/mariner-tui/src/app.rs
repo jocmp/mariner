@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mariner_core::{AddFeedResult, Article, ArticleContent, ArticleFilter, Feed};
+use mariner_core::{AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed};
 use mariner_feeds::fetch::HttpFetcher;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -16,7 +16,7 @@ use ratatui::widgets::ListState;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-use crate::dialog::{Action, Dialog};
+use crate::dialog::{Action, Dialog, Target};
 use crate::images::Images;
 use crate::reader::{self, LinkRange, Part};
 use crate::{LocalAccount, halfblock, ui};
@@ -68,7 +68,9 @@ pub struct App<'a> {
     account: Arc<LocalAccount>,
     pub feeds: Vec<Feed>,
     pub unread: HashMap<String, usize>,
-    /// Row 0 is every feed; row n is `feeds[n - 1]`.
+    /// The feeds pane's rows: every feed, then each folder with its feeds,
+    /// then feeds in no folder.
+    pub rows: Vec<Row>,
     pub feed_list: ListState,
     pub filter: ArticleFilter,
     pub articles: Vec<Article>,
@@ -85,11 +87,10 @@ pub struct App<'a> {
     pub dialog: Option<Dialog>,
     /// Fetches article pages for their full text.
     fetcher: HttpFetcher,
-    /// Full texts extracted this session by article id; `None` when the
-    /// page had no article.
-    full_texts: HashMap<String, Option<String>>,
-    /// The article whose full text is being extracted.
-    extracting: Option<(String, JoinHandle<mariner_core::Result<Option<String>>>)>,
+    /// What extracting full texts led to this session, by article id.
+    full_texts: HashMap<String, FullText>,
+    /// Extractions under way, by article id.
+    extracting: HashMap<String, JoinHandle<mariner_core::Result<Option<String>>>>,
     /// Opens a URL in the browser; swappable so tests don't.
     opener: Opener,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
@@ -105,6 +106,26 @@ pub struct Areas {
     pub reader: Option<Rect>,
 }
 
+/// A row of the feeds pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Row {
+    All,
+    Folder(String),
+    /// A feed by id, under `folder` or in none.
+    Feed {
+        id: String,
+        folder: Option<String>,
+    },
+}
+
+/// What extracting an article's full text led to.
+enum FullText {
+    Found(String),
+    /// The page had no article.
+    Missing,
+    Failed(String),
+}
+
 /// The open article.
 pub struct Reader {
     pub article: Article,
@@ -112,6 +133,9 @@ pub struct Reader {
     pub feed_html: Option<String>,
     /// Whether the full text is showing.
     pub full_text: bool,
+    /// Whether the full text was asked for (with c, or by the feed's
+    /// setting), so it shows once it's extracted.
+    pub wants_full_text: bool,
     /// Whether condense's output shows instead of the rendered article.
     pub document: bool,
     pub parts: Vec<Part>,
@@ -130,6 +154,7 @@ impl<'a> App<'a> {
             account,
             feeds: Vec::new(),
             unread: HashMap::new(),
+            rows: vec![Row::All],
             feed_list: ListState::default().with_selected(Some(0)),
             filter: ArticleFilter::Unread,
             articles: Vec::new(),
@@ -143,7 +168,7 @@ impl<'a> App<'a> {
             dialog: None,
             fetcher,
             full_texts: HashMap::new(),
-            extracting: None,
+            extracting: HashMap::new(),
             opener: Box::new(open_in_system_browser),
             refreshing: None,
             adding: None,
@@ -155,10 +180,51 @@ impl<'a> App<'a> {
         self.refreshing.is_some()
     }
 
-    /// The selected feed, or `None` for every feed.
+    /// The selected feed, or `None` for every feed or a folder.
     pub fn selected_feed(&self) -> Option<&Feed> {
+        match self.selected_row() {
+            Row::Feed { id, .. } => self.feed(id),
+            Row::All | Row::Folder(_) => None,
+        }
+    }
+
+    pub fn feed(&self, id: &str) -> Option<&Feed> {
+        self.feeds.iter().find(|feed| feed.id == id)
+    }
+
+    /// What the reader's title says about the full text: showing, being
+    /// extracted, or why it isn't showing.
+    pub fn full_text_note(&self) -> Option<&'static str> {
+        let reader = self.reader.as_ref()?;
+        if reader.full_text {
+            return Some("full text");
+        }
+        if !reader.wants_full_text {
+            return None;
+        }
+        let id = &reader.article.id;
+        if self.extracting.contains_key(id) {
+            return Some("getting full text…");
+        }
+        match self.full_texts.get(id) {
+            Some(FullText::Missing) => Some("no full text found"),
+            Some(FullText::Failed(_)) => Some("full text failed"),
+            Some(FullText::Found(_)) | None => None,
+        }
+    }
+
+    fn selected_row(&self) -> &Row {
         let row = self.feed_list.selected().unwrap_or(0);
-        row.checked_sub(1).and_then(|index| self.feeds.get(index))
+        self.rows.get(row).unwrap_or(&Row::All)
+    }
+
+    /// Where the article list comes from.
+    fn scope(&self) -> ArticleScope {
+        match self.selected_row() {
+            Row::All => ArticleScope::All,
+            Row::Folder(name) => ArticleScope::Tag(name.clone()),
+            Row::Feed { id, .. } => ArticleScope::Feed(id.clone()),
+        }
     }
 
     pub fn feed_title(&self, feed_id: &str) -> &str {
@@ -182,8 +248,25 @@ impl<'a> App<'a> {
                     self.dialog = None;
                     self.open_url(&url);
                 }
+                Action::Rename(target, name) => self.rename(target, name),
+                Action::Remove(target) => self.remove(target),
+                Action::Move { feed_id, folder } => self.move_feed(feed_id, folder),
+                Action::NewFolder(feed_id) => {
+                    self.dialog = Some(Dialog::NewFolder {
+                        feed_id,
+                        input: String::new(),
+                    })
+                }
             }
             return;
+        }
+        if self.focus == Pane::Feeds {
+            match key.code {
+                KeyCode::Char('e') => return self.ask_rename(),
+                KeyCode::Char('d') => return self.ask_remove(),
+                KeyCode::Char('M') => return self.ask_move(),
+                _ => {}
+            }
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
@@ -203,6 +286,7 @@ impl<'a> App<'a> {
             KeyCode::Char('o') => self.open_in_browser(),
             KeyCode::Char('L') => self.show_links(),
             KeyCode::Char('c') => self.toggle_full_text(),
+            KeyCode::Char('C') => self.toggle_sticky_full_text(),
             KeyCode::Char('/') => self.toggle_document(),
             _ => {}
         }
@@ -210,12 +294,14 @@ impl<'a> App<'a> {
 
     /// Notices a finished refresh, add or extraction.
     fn tick(&mut self) {
-        if self
+        let finished: Vec<String> = self
             .extracting
-            .as_ref()
-            .is_some_and(|(_, handle)| handle.is_finished())
-        {
-            let (id, handle) = self.extracting.take().expect("checked");
+            .iter()
+            .filter(|(_, handle)| handle.is_finished())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in finished {
+            let handle = self.extracting.remove(&id).expect("listed");
             let result = match self.runtime.block_on(handle) {
                 Ok(result) => result.map_err(|error| error.to_string()),
                 Err(error) => Err(error.to_string()),
@@ -272,11 +358,7 @@ impl<'a> App<'a> {
                 self.dialog = None;
                 self.status = format!("Added {}", feed.title);
                 self.reload();
-                if let Some(index) = self.feeds.iter().position(|listed| listed.id == feed.id) {
-                    self.feed_list.select(Some(index + 1));
-                    self.article_list.select(None);
-                    self.load_articles();
-                }
+                self.select_feed(&feed.id, None);
                 self.focus = Pane::Feeds;
             }
             Ok(AddFeedResult::Choices(choices)) => self.dialog = Some(Dialog::choose(choices)),
@@ -292,6 +374,7 @@ impl<'a> App<'a> {
 
     /// Reloads feeds, counts and the article list, keeping selections.
     fn reload(&mut self) {
+        let selected = self.selected_row().clone();
         match self.runtime.block_on(self.account.feeds()) {
             Ok(feeds) => self.feeds = feeds,
             Err(error) => self.status = error.to_string(),
@@ -299,25 +382,44 @@ impl<'a> App<'a> {
         if let Ok(unread) = self.runtime.block_on(self.account.unread_counts()) {
             self.unread = unread;
         }
-        let rows = self.feeds.len() + 1;
-        if self.feed_list.selected().is_none_or(|row| row >= rows) {
-            self.feed_list.select(Some(0));
-        }
+        self.rows = rows(&self.feeds);
+        let row = self
+            .rows
+            .iter()
+            .position(|row| *row == selected)
+            .unwrap_or(0);
+        self.feed_list.select(Some(row));
         self.load_articles();
     }
 
+    /// Selects a feed's row, under `folder` when it's listed there, and
+    /// lists its articles.
+    fn select_feed(&mut self, id: &str, folder: Option<&str>) {
+        let is_feed = |row: &Row| matches!(row, Row::Feed { id: row_id, .. } if row_id == id);
+        let row = self
+            .rows
+            .iter()
+            .position(|row| {
+                is_feed(row) && matches!(row, Row::Feed { folder: f, .. } if f.as_deref() == folder)
+            })
+            .or_else(|| self.rows.iter().position(is_feed));
+        if let Some(row) = row {
+            self.feed_list.select(Some(row));
+            self.article_list.select(None);
+            self.load_articles();
+        }
+    }
+
     fn load_articles(&mut self) {
-        let feed_id = self.selected_feed().map(|feed| feed.id.clone());
+        let scope = self.scope();
         let selected_id = self
             .article_list
             .selected()
             .and_then(|row| self.articles.get(row))
             .map(|article| article.id.clone());
-        let articles =
-            self.runtime.block_on(
-                self.account
-                    .articles(self.filter, feed_id.as_deref(), PAGE, 0),
-            );
+        let articles = self
+            .runtime
+            .block_on(self.account.articles(self.filter, &scope, PAGE, 0));
         match articles {
             Ok(articles) => self.articles = articles,
             Err(error) => self.status = error.to_string(),
@@ -331,8 +433,11 @@ impl<'a> App<'a> {
     fn move_by(&mut self, delta: i32) {
         match self.focus {
             Pane::Feeds => {
-                let rows = self.feeds.len() + 1;
-                let row = step(self.feed_list.selected().unwrap_or(0), delta, rows);
+                let row = step(
+                    self.feed_list.selected().unwrap_or(0),
+                    delta,
+                    self.rows.len(),
+                );
                 if Some(row) != self.feed_list.selected() {
                     self.feed_list.select(Some(row));
                     self.article_list.select(None);
@@ -403,10 +508,14 @@ impl<'a> App<'a> {
                 let parts = reader::parts(&content, self.feed_title(&article.feed_id));
                 self.images
                     .request(self.runtime, reader::image_urls(&parts));
+                let sticky = self
+                    .feed(&article.feed_id)
+                    .is_some_and(|feed| feed.sticky_full_content);
                 self.reader = Some(Reader {
                     article: content.article,
                     feed_html: content.content_html,
                     full_text: false,
+                    wants_full_text: false,
                     document: false,
                     parts,
                     scroll: 0,
@@ -416,6 +525,9 @@ impl<'a> App<'a> {
                 self.focus = Pane::Reader;
                 if !article.read {
                     self.set_read(&article.id, true);
+                }
+                if sticky {
+                    self.request_full_text();
                 }
             }
             Ok(None) => self.status = "That article is gone".into(),
@@ -504,11 +616,8 @@ impl<'a> App<'a> {
     }
 
     fn mark_all_read(&mut self) {
-        let feed_id = self.selected_feed().map(|feed| feed.id.clone());
-        match self
-            .runtime
-            .block_on(self.account.mark_all_read(feed_id.as_deref()))
-        {
+        let scope = self.scope();
+        match self.runtime.block_on(self.account.mark_all_read(&scope)) {
             Ok(()) => self.status = "Marked all read".into(),
             Err(error) => self.status = error.to_string(),
         }
@@ -544,55 +653,111 @@ impl<'a> App<'a> {
     }
 
     /// Switches the open article between the feed's content and the full
-    /// text from its page, extracting it in the background the first time.
+    /// text from its page. Asking again after a failure tries again, and
+    /// asking while it's being extracted stops waiting for it.
     fn toggle_full_text(&mut self) {
-        let Some(reader) = &self.reader else { return };
-        if reader.full_text {
+        let Some(reader) = &mut self.reader else {
+            return;
+        };
+        let waiting = reader.wants_full_text && self.extracting.contains_key(&reader.article.id);
+        if reader.full_text || waiting {
+            reader.wants_full_text = false;
             self.show_content(false);
             return;
         }
+        self.request_full_text();
+    }
+
+    /// Shows the open article's full text, extracting it in the background
+    /// unless it already was.
+    fn request_full_text(&mut self) {
+        let Some(reader) = &mut self.reader else {
+            return;
+        };
+        reader.wants_full_text = true;
         let id = reader.article.id.clone();
-        match self.full_texts.get(&id) {
-            Some(Some(_)) => return self.show_content(true),
-            Some(None) => {
-                self.status = "No full text found for this article".into();
-                return;
-            }
-            None => {}
+        if let Some(FullText::Found(_)) = self.full_texts.get(&id) {
+            return self.show_content(true);
         }
         let Some(url) = reader.article.url.clone() else {
+            self.full_texts
+                .insert(id, FullText::Failed("no link to read from".into()));
             self.status = "This article has no link to read from".into();
             return;
         };
-        if self.extracting.is_some() {
+        if self.extracting.contains_key(&id) {
             return;
         }
         let fetcher = self.fetcher.clone();
         let task = self
             .runtime
             .spawn(async move { mariner_core::extract::full_content(&fetcher, &url).await });
-        self.extracting = Some((id, task));
+        self.extracting.insert(id, task);
         self.status = "Getting the full text…".into();
     }
 
-    /// Keeps an extraction's result, showing it if its article is open.
+    /// Keeps an extraction's result, showing it if its article is open and
+    /// waiting for it.
     fn extracted(&mut self, id: String, result: Result<Option<String>, String>) {
-        match result {
-            Ok(content) => {
-                let found = content.is_some();
-                self.full_texts.insert(id.clone(), content);
-                let open = self
-                    .reader
-                    .as_ref()
-                    .is_some_and(|reader| reader.article.id == id);
-                if !found {
-                    self.status = "No full text found for this article".into();
-                } else if open {
-                    self.show_content(true);
-                    self.status = "Showing the full text; c for the feed's".into();
+        let waiting = self
+            .reader
+            .as_ref()
+            .is_some_and(|reader| reader.article.id == id && reader.wants_full_text);
+        let full_text = match result {
+            Ok(Some(html)) => FullText::Found(html),
+            Ok(None) => FullText::Missing,
+            Err(error) => FullText::Failed(error),
+        };
+        if waiting {
+            self.status = match &full_text {
+                FullText::Found(_) => "Showing the full text; c for the feed's".into(),
+                FullText::Missing => "No full text found for this article; c to try again".into(),
+                FullText::Failed(error) => {
+                    format!("Couldn't get the full text: {error}; c to try again")
                 }
-            }
-            Err(error) => self.status = format!("Couldn't get the full text: {error}"),
+            };
+        }
+        let found = matches!(full_text, FullText::Found(_));
+        self.full_texts.insert(id, full_text);
+        if waiting && found {
+            self.show_content(true);
+        }
+    }
+
+    /// Turns opening in full text on or off for the current feed: the
+    /// selected one in the feeds pane, or else the current article's.
+    fn toggle_sticky_full_text(&mut self) {
+        let feed_id = match self.focus {
+            Pane::Feeds => self.selected_feed().map(|feed| feed.id.clone()),
+            Pane::Articles | Pane::Reader => self
+                .current_article()
+                .map(|article| article.feed_id.clone()),
+        };
+        let Some(feed) = feed_id.and_then(|id| self.feed(&id)).cloned() else {
+            self.status = "Select a feed or an article first".into();
+            return;
+        };
+        let enabled = !feed.sticky_full_content;
+        let result = self
+            .runtime
+            .block_on(self.account.set_sticky_full_content(&feed.id, enabled));
+        if let Err(error) = result {
+            self.status = error.to_string();
+            return;
+        }
+        if let Some(listed) = self.feeds.iter_mut().find(|listed| listed.id == feed.id) {
+            listed.sticky_full_content = enabled;
+        }
+        self.status = if enabled {
+            format!("{} opens in full text; C to stop", feed.title)
+        } else {
+            format!("{} opens in the feed's content", feed.title)
+        };
+        let reading = self.reader.as_ref().is_some_and(|reader| {
+            reader.article.feed_id == feed.id && !reader.full_text && !reader.wants_full_text
+        });
+        if enabled && reading {
+            self.request_full_text();
         }
     }
 
@@ -618,7 +783,10 @@ impl<'a> App<'a> {
     fn rebuild_reader(&mut self) {
         let Some(reader) = &self.reader else { return };
         let html = if reader.full_text {
-            self.full_texts.get(&reader.article.id).cloned().flatten()
+            match self.full_texts.get(&reader.article.id) {
+                Some(FullText::Found(html)) => Some(html.clone()),
+                _ => None,
+            }
         } else {
             reader.feed_html.clone()
         };
@@ -637,6 +805,138 @@ impl<'a> App<'a> {
         if let Some(reader) = &mut self.reader {
             reader.parts = parts;
             reader.scroll = 0;
+        }
+    }
+
+    /// Asks for a new name for the selected feed or folder.
+    fn ask_rename(&mut self) {
+        let (target, name) = match self.selected_row() {
+            Row::All => return,
+            Row::Folder(name) => (Target::Folder(name.clone()), name.clone()),
+            Row::Feed { id, .. } => match self.feed(id) {
+                Some(feed) => (Target::Feed(id.clone()), feed.title.clone()),
+                None => return,
+            },
+        };
+        self.dialog = Some(Dialog::Rename {
+            target,
+            input: name,
+        });
+    }
+
+    /// Asks before removing the selected feed or folder.
+    fn ask_remove(&mut self) {
+        let (target, name) = match self.selected_row() {
+            Row::All => return,
+            Row::Folder(name) => (Target::Folder(name.clone()), name.clone()),
+            Row::Feed { id, .. } => match self.feed(id) {
+                Some(feed) => (Target::Feed(id.clone()), feed.title.clone()),
+                None => return,
+            },
+        };
+        self.dialog = Some(Dialog::Remove { target, name });
+    }
+
+    /// Offers the folders to move the selected feed to.
+    fn ask_move(&mut self) {
+        let Row::Feed { id, folder } = self.selected_row().clone() else {
+            self.status = "Select a feed to move".into();
+            return;
+        };
+        let folders = self
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Folder(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        self.dialog = Some(Dialog::move_to(id, folders, folder.as_deref()));
+    }
+
+    fn rename(&mut self, target: Target, name: String) {
+        self.dialog = None;
+        let result = match &target {
+            Target::Feed(id) => {
+                let Some(feed) = self.feed(id).cloned() else {
+                    return;
+                };
+                self.runtime
+                    .block_on(self.account.update_feed(&feed, &name, &feed.tag_names))
+                    .map(|_| ())
+            }
+            Target::Folder(old) => self.runtime.block_on(self.account.update_tag(old, &name)),
+        };
+        match result {
+            Ok(()) => self.status = format!("Renamed to {name}"),
+            Err(error) => self.status = format!("Couldn't rename: {error}"),
+        }
+        self.reload();
+        if matches!(target, Target::Folder(_))
+            && let Some(row) = self
+                .rows
+                .iter()
+                .position(|row| *row == Row::Folder(name.clone()))
+        {
+            self.feed_list.select(Some(row));
+            self.load_articles();
+        }
+    }
+
+    fn remove(&mut self, target: Target) {
+        self.dialog = None;
+        let result = match &target {
+            Target::Feed(id) => {
+                let Some(feed) = self.feed(id).cloned() else {
+                    return;
+                };
+                let result = self.runtime.block_on(self.account.remove_feed(&feed));
+                if result.is_ok() {
+                    self.status = format!("Removed {}", feed.title);
+                    if self
+                        .reader
+                        .as_ref()
+                        .is_some_and(|reader| reader.article.feed_id == feed.id)
+                    {
+                        self.reader = None;
+                    }
+                }
+                result
+            }
+            Target::Folder(name) => {
+                let result = self.runtime.block_on(self.account.remove_tag(name));
+                if result.is_ok() {
+                    self.status = format!("Removed the folder {name}; its feeds stay");
+                }
+                result
+            }
+        };
+        if let Err(error) = result {
+            self.status = format!("Couldn't remove: {error}");
+        }
+        self.reload();
+    }
+
+    /// Puts a feed in one folder, or in none.
+    fn move_feed(&mut self, feed_id: String, folder: Option<String>) {
+        self.dialog = None;
+        let Some(feed) = self.feed(&feed_id).cloned() else {
+            return;
+        };
+        let tags: Vec<String> = folder.iter().cloned().collect();
+        let result = self
+            .runtime
+            .block_on(self.account.update_feed(&feed, &feed.title, &tags));
+        match result {
+            Ok(_) => {
+                self.status = match &folder {
+                    Some(folder) => format!("Moved {} to {folder}", feed.title),
+                    None => format!("Moved {} out of its folder", feed.title),
+                };
+                self.reload();
+                self.select_feed(&feed_id, folder.as_deref());
+            }
+            Err(error) => self.status = format!("Couldn't move: {error}"),
         }
     }
 
@@ -674,7 +974,7 @@ impl<'a> App<'a> {
         match pane {
             Pane::Feeds => {
                 let index = self.feed_list.offset() + usize::from(y);
-                if index <= self.feeds.len() && Some(index) != self.feed_list.selected() {
+                if index < self.rows.len() && Some(index) != self.feed_list.selected() {
                     self.feed_list.select(Some(index));
                     self.article_list.select(None);
                     self.load_articles();
@@ -733,6 +1033,37 @@ impl<'a> App<'a> {
             inside.then(|| (pane, column - area.x - 1, row - area.y - 1))
         })
     }
+}
+
+/// The feeds pane's rows: every feed, each folder followed by its feeds,
+/// then the feeds in no folder. A feed with several tags is under each.
+fn rows(feeds: &[Feed]) -> Vec<Row> {
+    let mut folders: Vec<&String> = feeds.iter().flat_map(|feed| &feed.tag_names).collect();
+    folders.sort_by_key(|name| name.to_lowercase());
+    folders.dedup();
+    let mut rows = vec![Row::All];
+    for folder in folders {
+        rows.push(Row::Folder(folder.clone()));
+        rows.extend(
+            feeds
+                .iter()
+                .filter(|feed| feed.tag_names.contains(folder))
+                .map(|feed| Row::Feed {
+                    id: feed.id.clone(),
+                    folder: Some(folder.clone()),
+                }),
+        );
+    }
+    rows.extend(
+        feeds
+            .iter()
+            .filter(|feed| feed.tag_names.is_empty())
+            .map(|feed| Row::Feed {
+                id: feed.id.clone(),
+                folder: None,
+            }),
+    );
+    rows
 }
 
 /// Opens `url` with the system's opener (`open` on macOS, `xdg-open`
@@ -1089,6 +1420,7 @@ mod tests {
         app.open_article();
         let id = app.reader.as_ref().unwrap().article.id.clone();
 
+        app.reader.as_mut().unwrap().wants_full_text = true;
         app.extracted(
             id.clone(),
             Ok(Some("<p>The whole story, at length.</p>".into())),
@@ -1108,13 +1440,118 @@ mod tests {
 
         press(&mut app, KeyCode::Char('c'));
         assert!(
-            app.extracting.is_none(),
+            app.extracting.is_empty(),
             "the full text is kept, not fetched again"
         );
         assert!(render(&mut app, 100).contains("The whole story"));
+    }
 
-        app.extracted("b".into(), Ok(None));
-        assert_eq!(app.status, "No full text found for this article");
+    #[test]
+    fn shows_why_the_full_text_isnt_showing() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.open_article();
+        let id = app.reader.as_ref().unwrap().article.id.clone();
+
+        app.extracted(id.clone(), Ok(None));
+        assert!(
+            !render(&mut app, 100).contains("no full text"),
+            "nothing to say when it wasn't asked for"
+        );
+
+        app.reader.as_mut().unwrap().wants_full_text = true;
+        app.extracted(id.clone(), Err("timed out".into()));
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains("Article · full text failed") && screen.contains("Hello world"),
+            "{screen}"
+        );
+        assert_eq!(
+            app.status,
+            "Couldn't get the full text: timed out; c to try again"
+        );
+    }
+
+    #[test]
+    fn opens_a_sticky_feeds_articles_in_full_text() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.full_texts.insert(
+            "a".into(),
+            FullText::Found("<p>The whole story.</p>".into()),
+        );
+
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(app.status, "Example Feed opens in full text; C to stop");
+        app.reload();
+        assert!(app.feeds[0].sticky_full_content, "it's stored");
+
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains("Article · full text") && screen.contains("The whole story."),
+            "{screen}"
+        );
+
+        press(&mut app, KeyCode::Char('c'));
+        assert!(
+            render(&mut app, 100).contains("Hello world"),
+            "c still switches"
+        );
+    }
+
+    #[test]
+    fn renames_moves_and_removes_feeds() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        press(&mut app, KeyCode::Char('j'));
+
+        press(&mut app, KeyCode::Char('e'));
+        for _ in 0.."Feed".len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "Site");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.feeds[0].title, "Example Site");
+
+        press(&mut app, KeyCode::Char('M'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "News");
+        press(&mut app, KeyCode::Enter);
+        let screen = render(&mut app, 140);
+        assert!(screen.contains("▾ News 2"), "{screen}");
+        assert!(screen.contains("  Example Site 2"), "{screen}");
+        assert_eq!(
+            app.selected_row(),
+            &Row::Feed {
+                id: "f".into(),
+                folder: Some("News".into())
+            },
+            "the moved feed stays selected"
+        );
+
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.articles.len(), 2, "a folder lists its feeds' articles");
+
+        press(&mut app, KeyCode::Char('d'));
+        assert!(render(&mut app, 140).contains("Its feeds stay"));
+        press(&mut app, KeyCode::Char('y'));
+        assert_eq!(app.rows.len(), 2, "the feed is out of the folder");
+
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(app.feeds.len(), 1, "n keeps it");
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.feeds.is_empty());
+        assert_eq!(app.status, "Removed Example Site");
     }
 
     #[test]
@@ -1134,6 +1571,7 @@ mod tests {
         );
 
         let id = app.reader.as_ref().unwrap().article.id.clone();
+        app.reader.as_mut().unwrap().wants_full_text = true;
         app.extracted(id, Ok(Some("<p>The whole story.</p>".into())));
         let screen = render(&mut app, 120);
         assert!(

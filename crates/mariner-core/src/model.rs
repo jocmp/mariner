@@ -15,6 +15,8 @@ pub struct Feed {
     pub itunes_image_url: Option<String>,
     /// Sorted by name.
     pub tag_names: Vec<String>,
+    /// Whether its articles open in full text, extracted from their pages.
+    pub sticky_full_content: bool,
 }
 
 /// An article as a list shows it, without its content.
@@ -45,6 +47,28 @@ pub enum ArticleFilter {
     All,
     Unread,
     Starred,
+}
+
+/// Where articles are listed from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArticleScope {
+    /// Every feed.
+    All,
+    /// One feed, by id.
+    Feed(String),
+    /// Every feed with a tag, by name.
+    Tag(String),
+}
+
+impl ArticleScope {
+    /// The feed id and tag name to limit a query to.
+    pub(crate) fn feed_and_tag(&self) -> (Option<String>, Option<String>) {
+        match self {
+            ArticleScope::All => (None, None),
+            ArticleScope::Feed(id) => (Some(id.clone()), None),
+            ArticleScope::Tag(name) => (None, Some(name.clone())),
+        }
+    }
 }
 
 /// What adding a feed by URL led to.

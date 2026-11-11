@@ -13,7 +13,7 @@ use mariner_feeds::finder::FoundFeed;
 use crate::database::Database;
 use std::collections::HashMap;
 
-use crate::model::{AddFeedResult, Article, ArticleContent, ArticleFilter, Feed};
+use crate::model::{AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed};
 use crate::{Result, queries, time};
 
 mod articles;
@@ -66,15 +66,15 @@ impl<F: Fetch + Send + Sync> Account<F> {
         Ok(self.database.optimize().await?)
     }
 
-    /// A page of articles, newest first, from one feed or all of them.
+    /// A page of articles in `scope`, newest first.
     pub async fn articles(
         &self,
         filter: ArticleFilter,
-        feed_id: Option<&str>,
+        scope: &ArticleScope,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Article>> {
-        queries::articles(&self.database, filter, feed_id, limit, offset).await
+        queries::articles(&self.database, filter, scope, limit, offset).await
     }
 
     /// One article with its content.
@@ -87,9 +87,9 @@ impl<F: Fetch + Send + Sync> Account<F> {
         queries::unread_counts(&self.database).await
     }
 
-    /// Marks every unread article read, in one feed or all of them.
-    pub async fn mark_all_read(&self, feed_id: Option<&str>) -> Result<()> {
-        let ids = queries::unread_article_ids(&self.database, feed_id).await?;
+    /// Marks every unread article in `scope` read.
+    pub async fn mark_all_read(&self, scope: &ArticleScope) -> Result<()> {
+        let ids = queries::unread_article_ids(&self.database, scope).await?;
         self.mark_read(&ids).await
     }
 
@@ -141,6 +141,12 @@ impl<F: Fetch + Send + Sync> Account<F> {
     pub async fn update_tag(&self, old_name: &str, new_name: &str) -> Result<()> {
         self.delegate.update_tag(self, old_name, new_name).await?;
         feeds::rename_tag(&self.database, old_name, new_name).await
+    }
+
+    /// Whether the feed's articles open in full text. This is a setting on
+    /// this device, so the delegate isn't told.
+    pub async fn set_sticky_full_content(&self, feed_id: &str, enabled: bool) -> Result<()> {
+        feeds::set_sticky_full_content(&self.database, feed_id, enabled).await
     }
 
     /// Unsubscribes, deleting the feed's articles, starred ones included.

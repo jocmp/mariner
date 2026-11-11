@@ -1,11 +1,13 @@
 -- name: select_feeds
 -- Every feed, by title (case-insensitively).
-SELECT id, subscription_id, title, feed_url, site_url, favicon_url, itunes_image_url
+SELECT id, subscription_id, title, feed_url, site_url, favicon_url, itunes_image_url,
+       enable_sticky_full_content
 FROM feeds
 ORDER BY title COLLATE NOCASE, id;
 
 -- name: select_feed
-SELECT id, subscription_id, title, feed_url, site_url, favicon_url, itunes_image_url
+SELECT id, subscription_id, title, feed_url, site_url, favicon_url, itunes_image_url,
+       enable_sticky_full_content
 FROM feeds
 WHERE id = ?1;
 
@@ -19,6 +21,14 @@ VALUES (?1, ?1, ?2, ?3, ?4, ?5);
 
 -- name: update_feed_title
 UPDATE feeds SET title = ?2 WHERE id = ?1;
+
+-- name: update_feed_from_source
+-- What the feed itself says now. A NULL title or site keeps the stored one.
+UPDATE feeds SET title = COALESCE(?2, title), site_url = COALESCE(?3, site_url)
+WHERE id = ?1;
+
+-- name: update_feed_sticky_full_content
+UPDATE feeds SET enable_sticky_full_content = ?2 WHERE id = ?1;
 
 -- name: delete_feed_statuses
 -- Statuses have no foreign key, so they're deleted before their articles.

@@ -415,3 +415,34 @@ async fn status_changed_days_ago(account: &Account<Network>, days: i64) {
         .await
         .unwrap();
 }
+
+#[test]
+fn takes_the_feeds_new_title_and_site() {
+    block_on(async {
+        let network = Network::default().with(FEED_URL, &rss(&["1"]));
+        let (_dir, account) = local_account(&network).await;
+        account.add_feed(FEED_URL, None, None).await.unwrap();
+
+        network.respond(
+            FEED_URL,
+            200,
+            &[],
+            r#"<rss version="2.0"><channel><title>Renamed</title><link>https://example.org/</link><item><guid>1</guid></item></channel></rss>"#,
+        );
+        account.refresh(None).await.unwrap();
+        let feed = &account.feeds().await.unwrap()[0];
+        assert_eq!(feed.title, "Renamed");
+        assert_eq!(feed.site_url.as_deref(), Some("https://example.org/"));
+
+        network.respond(
+            FEED_URL,
+            200,
+            &[],
+            r#"<rss version="2.0"><channel><title> </title><item><guid>2</guid></item></channel></rss>"#,
+        );
+        account.refresh(None).await.unwrap();
+        let feed = &account.feeds().await.unwrap()[0];
+        assert_eq!(feed.title, "Renamed", "a blank title keeps the stored one");
+        assert_eq!(feed.site_url.as_deref(), Some("https://example.org/"));
+    });
+}

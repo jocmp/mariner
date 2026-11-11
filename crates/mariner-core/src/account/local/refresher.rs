@@ -15,7 +15,7 @@ use sha1::{Digest, Sha1};
 use super::crawl_data::{CrawlData, ErrorKind};
 use super::redirect_cache::RedirectCache;
 use crate::account::{Account, articles};
-use crate::sql::account::crawl;
+use crate::sql::account::{crawl, feeds};
 use crate::{Result, time};
 
 /// Feeds fetched at once.
@@ -136,6 +136,7 @@ async fn store<F>(account: &Account<F>, downloaded: Downloaded, cutoff: Option<i
             let transaction = connection.transaction()?;
             update_crawl_data(&transaction, &feed.id, &feed.crawl)?;
             if let Some(parsed) = parsed {
+                update_feed(&transaction, &feed.id, &parsed)?;
                 articles::store(
                     &transaction,
                     &feed.id,
@@ -149,6 +150,23 @@ async fn store<F>(account: &Account<F>, downloaded: Downloaded, cutoff: Option<i
         })
         .await?;
     Ok(())
+}
+
+/// Takes the title and site the feed gives now, keeping the stored ones
+/// when it gives none.
+fn update_feed(connection: &Connection, id: &str, parsed: &ParsedFeed) -> rusqlite::Result<()> {
+    connection
+        .prepare_cached(feeds::UPDATE_FEED_FROM_SOURCE)?
+        .execute(params![
+            id,
+            non_blank(parsed.title.as_deref()),
+            non_blank(parsed.site_url.as_deref()),
+        ])?;
+    Ok(())
+}
+
+fn non_blank(text: Option<&str>) -> Option<&str> {
+    text.map(str::trim).filter(|text| !text.is_empty())
 }
 
 fn due_feeds(connection: &Connection, now: i64) -> rusqlite::Result<Vec<DueFeed>> {

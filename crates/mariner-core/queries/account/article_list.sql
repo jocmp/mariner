@@ -1,5 +1,5 @@
--- Listing articles, newest first. ?1 is a feed id, or NULL for every feed;
--- ?2 and ?3 are the limit and offset.
+-- Listing articles, newest first. ?1 is a feed id and ?4 a tag name, either
+-- NULL for no limit; ?2 and ?3 are the limit and offset.
 
 -- name: select_articles
 SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
@@ -7,6 +7,7 @@ SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
 FROM articles a
 LEFT JOIN article_statuses s ON s.article_id = a.id
 WHERE (?1 IS NULL OR a.feed_id = ?1)
+  AND (?4 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?4))
 ORDER BY a.published_at DESC, a.id
 LIMIT ?2 OFFSET ?3;
 
@@ -16,6 +17,7 @@ SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
 FROM articles a
 JOIN article_statuses s ON s.article_id = a.id
 WHERE s.read = 0 AND (?1 IS NULL OR a.feed_id = ?1)
+  AND (?4 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?4))
 ORDER BY a.published_at DESC, a.id
 LIMIT ?2 OFFSET ?3;
 
@@ -25,15 +27,18 @@ SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
 FROM articles a
 JOIN article_statuses s ON s.article_id = a.id
 WHERE s.starred = 1 AND (?1 IS NULL OR a.feed_id = ?1)
+  AND (?4 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?4))
 ORDER BY a.published_at DESC, a.id
 LIMIT ?2 OFFSET ?3;
 
 -- name: select_unread_article_ids
--- Every unread article's id, for marking them all read.
+-- Every unread article's id, for marking them all read. ?1 is a feed id and
+-- ?2 a tag name, either NULL for no limit.
 SELECT s.article_id
 FROM article_statuses s
 JOIN articles a ON a.id = s.article_id
-WHERE s.read = 0 AND (?1 IS NULL OR a.feed_id = ?1);
+WHERE s.read = 0 AND (?1 IS NULL OR a.feed_id = ?1)
+  AND (?2 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?2));
 
 -- name: select_article
 -- One article with its content, for reading.

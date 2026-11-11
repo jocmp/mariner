@@ -8,8 +8,8 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
-use crate::app::{App, Areas, Pane};
-use crate::dialog::Dialog;
+use crate::app::{App, Areas, Pane, Row};
+use crate::dialog::{Dialog, Target};
 use crate::reader;
 
 /// Narrower terminals show one pane at a time.
@@ -65,6 +65,9 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
         Dialog::Links { links, .. } => {
             (links.len() as u16 + 2).min(screen.height.saturating_sub(2))
         }
+        Dialog::Move { folders, .. } => {
+            (folders.len() as u16 + 3).min(screen.height.saturating_sub(2))
+        }
         _ => 6.min(screen.height),
     };
     let area = Rect {
@@ -76,13 +79,7 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
     frame.render_widget(Clear, area);
     match dialog {
         Dialog::Add { input, message } => {
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::from("URL: "),
-                    Span::from(format!("{input}▏")).bold(),
-                ]),
-                Line::default(),
-            ];
+            let mut lines = vec![input_line("URL: ", input), Line::default()];
             match message {
                 Some(message) => lines.push(Line::from(message.clone()).red()),
                 None => {
@@ -120,6 +117,53 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
                 .highlight_style(highlight());
             frame.render_stateful_widget(list_widget, area, list);
         }
+        Dialog::Rename { target, input } => {
+            let title = match target {
+                Target::Feed(_) => "Rename feed",
+                Target::Folder(_) => "Rename folder",
+            };
+            let hint = "Enter to rename, Esc to cancel";
+            frame.render_widget(text_box(title, "Name: ", input, hint), area);
+        }
+        Dialog::NewFolder { input, .. } => {
+            let hint = "Enter to move the feed there, Esc to cancel";
+            frame.render_widget(text_box("New folder", "Name: ", input, hint), area);
+        }
+        Dialog::Remove { target, name } => {
+            let (title, question) = match target {
+                Target::Feed(_) => (
+                    "Remove feed",
+                    format!("Unsubscribe from {name}? Its articles go too, starred ones included."),
+                ),
+                Target::Folder(_) => (
+                    "Remove folder",
+                    format!("Remove the folder {name}? Its feeds stay."),
+                ),
+            };
+            let lines = vec![
+                Line::from(question),
+                Line::default(),
+                Line::from("y to remove, n or Esc to cancel").dim(),
+            ];
+            let paragraph = Paragraph::new(lines)
+                .block(pane(title, true))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
+        Dialog::Move { folders, list, .. } => {
+            let mut items: Vec<ListItem> = folders
+                .iter()
+                .map(|folder| match folder {
+                    Some(name) => ListItem::new(name.clone()),
+                    None => ListItem::new(Line::from("No folder").italic()),
+                })
+                .collect();
+            items.push(ListItem::new(Line::from("New folder…").italic()));
+            let list_widget = List::new(items)
+                .block(pane("Move to", true).title_bottom(" Enter to move · Esc to cancel "))
+                .highlight_style(highlight());
+            frame.render_stateful_widget(list_widget, area, list);
+        }
         Dialog::Choose { choices, list } => {
             let items: Vec<ListItem> = choices
                 .iter()
@@ -143,13 +187,28 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
 }
 
 fn draw_feeds(frame: &mut Frame, app: &mut App, area: Rect) {
-    let total: usize = app.unread.values().sum();
-    let mut items = vec![row("All feeds", total)];
-    items.extend(
-        app.feeds
-            .iter()
-            .map(|feed| row(&feed.title, app.unread.get(&feed.id).copied().unwrap_or(0))),
-    );
+    let unread = |id: &str| app.unread.get(id).copied().unwrap_or(0);
+    let items: Vec<ListItem> = app
+        .rows
+        .iter()
+        .map(|listed| match listed {
+            Row::All => row("All feeds", app.unread.values().sum()),
+            Row::Folder(name) => {
+                let count = app
+                    .feeds
+                    .iter()
+                    .filter(|feed| feed.tag_names.contains(name))
+                    .map(|feed| unread(&feed.id))
+                    .sum();
+                row(&format!("▾ {name}"), count)
+            }
+            Row::Feed { id, folder } => {
+                let indent = if folder.is_some() { "  " } else { "" };
+                let title = app.feed(id).map_or("", |feed| feed.title.as_str());
+                row(&format!("{indent}{title}"), unread(id))
+            }
+        })
+        .collect();
     let list = List::new(items)
         .block(pane("Feeds", app.focus == Pane::Feeds))
         .highlight_style(highlight());
@@ -202,16 +261,12 @@ fn draw_articles(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
-    let title = match &app.reader {
-        Some(reader) => match (reader.full_text, reader.document) {
-            (false, false) => "Article",
-            (true, false) => "Article · full text",
-            (false, true) => "Article · condense",
-            (true, true) => "Article · full text · condense",
-        },
-        None => "Article",
-    };
-    let block = pane(title, app.focus == Pane::Reader);
+    let mut title = vec!["Article"];
+    title.extend(app.full_text_note());
+    if app.reader.as_ref().is_some_and(|reader| reader.document) {
+        title.push("condense");
+    }
+    let block = pane(&title.join(" · "), app.focus == Pane::Reader);
     let inner = block.inner(area);
     match &mut app.reader {
         Some(reader) => {
@@ -235,12 +290,14 @@ fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let keys = match app.focus {
-        Pane::Feeds => "j/k move · enter open · a add · f filter · r refresh · A all read · q quit",
+        Pane::Feeds => {
+            "j/k move · enter open · a add · e rename · M move · d remove · C full text · f filter · r refresh · A all read · q quit"
+        }
         Pane::Articles => {
             "j/k move · enter read · m read/unread · s star · A all read · o browser · esc back"
         }
         Pane::Reader => {
-            "j/k/space scroll · c full text · / condense · click or L for links · m read · s star · o browser · esc back"
+            "j/k/space scroll · c full text · C always · / condense · click or L for links · m read · s star · o browser · esc back"
         }
     };
     let status = if app.is_refreshing() {
@@ -257,6 +314,25 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         ])
     };
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// A dialog with one text box.
+fn text_box<'a>(title: &str, label: &'a str, input: &str, hint: &'a str) -> Paragraph<'a> {
+    let lines = vec![
+        input_line(label, input),
+        Line::default(),
+        Line::from(hint).dim(),
+    ];
+    Paragraph::new(lines)
+        .block(pane(title, true))
+        .wrap(Wrap { trim: true })
+}
+
+fn input_line<'a>(label: &'a str, input: &str) -> Line<'a> {
+    Line::from(vec![
+        Span::from(label),
+        Span::from(format!("{input}▏")).bold(),
+    ])
 }
 
 fn row(title: &str, unread: usize) -> ListItem<'static> {

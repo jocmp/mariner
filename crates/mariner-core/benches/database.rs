@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use futures_executor::block_on;
-use mariner_core::{Account, ArticleFilter, Database, Kind};
+use mariner_core::{Account, ArticleFilter, ArticleScope, Database, Kind};
 use mariner_feeds::fetch::{Fetch, FetchError, Request, Response};
 
 const FEEDS: usize = 50;
@@ -40,10 +40,15 @@ fn unread_page(c: &mut Criterion) {
     let (_dir, account) = block_on(seeded(10_000, 5));
     let mut group = c.benchmark_group("unread list of 10,000");
     group.bench_function("first page of 50", |b| {
-        b.iter(|| block_on(account.articles(ArticleFilter::Unread, None, 50, 0)).unwrap());
+        b.iter(|| {
+            block_on(account.articles(ArticleFilter::Unread, &ArticleScope::All, 50, 0)).unwrap()
+        });
     });
     group.bench_function("page of 50 at offset 5,000", |b| {
-        b.iter(|| block_on(account.articles(ArticleFilter::Unread, None, 50, 5_000)).unwrap());
+        b.iter(|| {
+            block_on(account.articles(ArticleFilter::Unread, &ArticleScope::All, 50, 5_000))
+                .unwrap()
+        });
     });
     group.finish();
 }
@@ -55,7 +60,7 @@ fn mark_all_read(c: &mut Criterion) {
     group.bench_function("5,000 unread", |b| {
         b.iter_batched(
             || block_on(seeded(5_000, 0)),
-            |(_dir, account)| block_on(account.mark_all_read(None)).unwrap(),
+            |(_dir, account)| block_on(account.mark_all_read(&ArticleScope::All)).unwrap(),
             BatchSize::PerIteration,
         );
     });
