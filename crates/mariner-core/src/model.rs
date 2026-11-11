@@ -32,6 +32,13 @@ pub struct Article {
     pub starred: bool,
 }
 
+/// An article with its content, for reading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArticleContent {
+    pub article: Article,
+    pub content_html: Option<String>,
+}
+
 /// Which articles to list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArticleFilter {

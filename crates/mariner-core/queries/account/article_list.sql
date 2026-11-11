@@ -34,3 +34,19 @@ SELECT s.article_id
 FROM article_statuses s
 JOIN articles a ON a.id = s.article_id
 WHERE s.read = 0 AND (?1 IS NULL OR a.feed_id = ?1);
+
+-- name: select_article
+-- One article with its content, for reading.
+SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
+       a.published_at, COALESCE(s.read, 0), COALESCE(s.starred, 0),
+       a.content_html
+FROM articles a
+LEFT JOIN article_statuses s ON s.article_id = a.id
+WHERE a.id = ?1;
+
+-- name: select_unread_counts
+SELECT a.feed_id, count(*)
+FROM articles a
+JOIN article_statuses s ON s.article_id = a.id
+WHERE s.read = 0
+GROUP BY a.feed_id;

@@ -4,9 +4,11 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::Result;
 use crate::database::Database;
+use std::collections::HashMap;
+
 use chrono::DateTime;
 
-use crate::model::{Article, ArticleFilter, Feed};
+use crate::model::{Article, ArticleContent, ArticleFilter, Feed};
 use crate::sql::account::{article_list, feeds, tags};
 
 /// Every feed, by title (case-insensitively).
@@ -33,6 +35,36 @@ pub(crate) async fn articles(
             connection
                 .prepare_cached(sql)?
                 .query_map(params![feed_id, limit as i64, offset as i64], article_row)?
+                .collect()
+        })
+        .await?)
+}
+
+/// One article with its content.
+pub(crate) async fn article(database: &Database, id: &str) -> Result<Option<ArticleContent>> {
+    let id = id.to_string();
+    Ok(database
+        .read(move |connection| {
+            connection
+                .prepare_cached(article_list::SELECT_ARTICLE)?
+                .query_row(params![id], |row| {
+                    Ok(ArticleContent {
+                        article: article_row(row)?,
+                        content_html: row.get(10)?,
+                    })
+                })
+                .optional()
+        })
+        .await?)
+}
+
+/// Unread articles per feed id; feeds with none are absent.
+pub(crate) async fn unread_counts(database: &Database) -> Result<HashMap<String, usize>> {
+    Ok(database
+        .read(|connection| {
+            connection
+                .prepare_cached(article_list::SELECT_UNREAD_COUNTS)?
+                .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))?
                 .collect()
         })
         .await?)

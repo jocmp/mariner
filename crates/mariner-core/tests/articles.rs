@@ -125,3 +125,35 @@ fn marks_all_read_in_one_feed_or_every_feed() {
         );
     });
 }
+
+#[test]
+fn reads_one_article_with_its_content() {
+    block_on(async {
+        let (_dir, account, _) = two_feeds().await;
+        let first = &account
+            .articles(ArticleFilter::All, None, 1, 0)
+            .await
+            .unwrap()[0];
+        let content = account.article(&first.id).await.unwrap().unwrap();
+        assert_eq!(&content.article, first);
+        assert!(account.article("missing").await.unwrap().is_none());
+    });
+}
+
+#[test]
+fn counts_unread_articles_per_feed() {
+    block_on(async {
+        let (_dir, account, news) = two_feeds().await;
+        let blog = account
+            .feeds()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|feed| feed.id != news.id)
+            .unwrap();
+        account.mark_all_read(Some(&blog.id)).await.unwrap();
+        let counts = account.unread_counts().await.unwrap();
+        assert_eq!(counts.get(&news.id), Some(&3));
+        assert_eq!(counts.get(&blog.id), None);
+    });
+}

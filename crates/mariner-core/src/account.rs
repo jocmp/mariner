@@ -11,7 +11,9 @@ use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::FoundFeed;
 
 use crate::database::Database;
-use crate::model::{AddFeedResult, Article, ArticleFilter, Feed};
+use std::collections::HashMap;
+
+use crate::model::{AddFeedResult, Article, ArticleContent, ArticleFilter, Feed};
 use crate::{Result, queries, time};
 
 mod articles;
@@ -73,6 +75,16 @@ impl<F: Fetch + Send + Sync> Account<F> {
         offset: usize,
     ) -> Result<Vec<Article>> {
         queries::articles(&self.database, filter, feed_id, limit, offset).await
+    }
+
+    /// One article with its content.
+    pub async fn article(&self, id: &str) -> Result<Option<ArticleContent>> {
+        queries::article(&self.database, id).await
+    }
+
+    /// Unread articles per feed id; feeds with none are absent.
+    pub async fn unread_counts(&self) -> Result<HashMap<String, usize>> {
+        queries::unread_counts(&self.database).await
     }
 
     /// Marks every unread article read, in one feed or all of them.

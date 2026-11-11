@@ -7,9 +7,21 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "mariner"
+path = "src/main.rs"
+
 [dependencies]
-mariner-core = { path = "../mariner-core" }
+chrono.workspace = true
+clap.workspace = true
 mariner-condense = { path = "../mariner-condense" }
+mariner-core = { path = "../mariner-core" }
+mariner-feeds = { path = "../mariner-feeds" }
+ratatui.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

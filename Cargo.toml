@@ -24,6 +24,7 @@ encoding_rs = "0.8.42"
 html5ever = "0.39.0"
 htmd = "0.5.5"
 quick-xml = "0.42.0"
+ratatui = "0.30.2"
 refinery = { version = "0.10.0", features = ["rusqlite"] }
 regex = "1.13.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
