@@ -1,9 +1,12 @@
-//! FeedFinder, against stubbed responses.
+//! FeedFinder and each of its sources, against stubbed responses.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use mariner_feeds::finder::{Fetch, FetchError, FindError, Response, find, find_options};
+use mariner_feeds::finder::{
+    BodyLinks, Fetch, FetchError, FindError, Guess, KnownPattern, MetaLinks, Response, Source, Xml,
+    find, find_options,
+};
 
 const ATOM: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -17,273 +20,356 @@ const JSON_FEED: &str = r#"{"version": "https://jsonfeed.org/version/1.1", "titl
 
 const HTML: &str = "<!doctype html><html><head><title>Page</title></head><body></body></html>";
 
-#[tokio::test]
-async fn finds_a_feed_url() {
-    let stub = Stub::default().with("https://example.com/atom.xml", ATOM);
-    assert_eq!(
-        found(&stub, "https://example.com/atom.xml").await,
-        ["https://example.com/atom.xml"]
-    );
-}
+mod xml {
+    use super::*;
 
-#[tokio::test]
-async fn finds_a_json_feed_url() {
-    let stub = Stub::default().with("https://example.com/feed.json", JSON_FEED);
-    assert_eq!(
-        found(&stub, "https://example.com/feed.json").await,
-        ["https://example.com/feed.json"]
-    );
-}
-
-#[tokio::test]
-async fn adds_a_missing_scheme() {
-    let stub = Stub::default().with("http://example.com/atom.xml", ATOM);
-    assert_eq!(
-        found(&stub, "example.com/atom.xml").await,
-        ["http://example.com/atom.xml"]
-    );
-}
-
-#[tokio::test]
-async fn finds_atom_links_on_another_host() {
-    let stub = Stub::default()
-        .with(
-            "https://example.com",
-            r#"<link rel="alternate" type="application/atom+xml" href="https://example2.com/comments/feed/"/>"#,
-        )
-        .with("https://example2.com/comments/feed/", ATOM);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        ["https://example2.com/comments/feed/"]
-    );
-}
-
-#[tokio::test]
-async fn finds_relative_feed_links() {
-    let stub = Stub::default()
-        .with(
-            "https://example.com",
-            r#"<link rel="alternate" type="application/rss+xml" href="/comments/feed/"/>"#,
-        )
-        .with("https://example.com/comments/feed/", ATOM);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        ["https://example.com/comments/feed/"]
-    );
-}
-
-#[tokio::test]
-async fn finds_json_feed_links() {
-    let stub = Stub::default()
-        .with(
-            "https://example.com",
-            r#"<link rel="alternate" type="application/json" href="/feeds/json/"/>"#,
-        )
-        .with("https://example.com/feeds/json/", JSON_FEED);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        ["https://example.com/feeds/json/"]
-    );
-}
-
-#[tokio::test]
-async fn finds_candidate_body_links() {
-    let mut stub = Stub::default();
-    let mut markup = String::new();
-    for kind in ["feed", "xml", "rss", "atom"] {
-        stub = stub.with(&format!("https://example.com/{kind}"), ATOM);
-        markup.push_str(&format!(r#"<a href="/{kind}">RSS</a>"#));
-    }
-    let stub = stub.with("https://example.com", &markup);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        [
-            "https://example.com/feed",
-            "https://example.com/xml",
-            "https://example.com/rss",
-            "https://example.com/atom",
-        ]
-    );
-}
-
-#[tokio::test]
-async fn skips_body_links_to_html() {
-    let stub = Stub::default()
-        .with("https://example.com", r#"<a href="/rss">RSS</a>"#)
-        .with("https://example.com/rss", HTML);
-    assert!(found(&stub, "https://example.com").await.is_empty());
-}
-
-#[tokio::test]
-async fn prefers_feed_links_to_body_links() {
-    let stub = Stub::default()
-        .with(
-            "https://example.com",
-            r#"<link rel="alternate" type="application/atom+xml" href="/atom.xml">
-               <a href="/rss">RSS</a>"#,
-        )
-        .with("https://example.com/atom.xml", ATOM)
-        .with("https://example.com/rss", ATOM);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        ["https://example.com/atom.xml"]
-    );
-    let requested = stub.requested.borrow();
-    assert!(!requested.contains(&"https://example.com/rss".to_string()));
-}
-
-#[tokio::test]
-async fn guesses_feed() {
-    let stub = Stub::default()
-        .with("https://example.com", "")
-        .with("https://example.com/feed", ATOM);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        ["https://example.com/feed"]
-    );
-}
-
-#[tokio::test]
-async fn guesses_rss() {
-    let stub = Stub::default()
-        .with("https://example.com", "")
-        .with("https://example.com/rss", ATOM);
-    assert_eq!(
-        found(&stub, "https://example.com").await,
-        ["https://example.com/rss"]
-    );
-}
-
-#[tokio::test]
-async fn recognizes_known_patterns() {
-    let cases = [
-        (
-            "https://www.youtube.com/channel/abc",
-            "https://www.youtube.com/feeds/videos.xml?channel_id=abc",
-        ),
-        (
-            "https://www.youtube.com/user/abc",
-            "https://www.youtube.com/feeds/videos.xml?user=abc",
-        ),
-        (
-            "https://www.youtube.com/playlist?list=abc",
-            "https://www.youtube.com/feeds/videos.xml?playlist_id=abc",
-        ),
-        (
-            "https://www.reddit.com/r/abc",
-            "https://www.reddit.com/r/abc.rss",
-        ),
-        ("https://vimeo.com/abc", "https://vimeo.com/abc/videos/rss"),
-        (
-            "https://github.com/orgs/community/discussions",
-            "https://github.com/orgs/community/discussions.atom",
-        ),
-        (
-            "https://github.com/orgs/other-org/discussions/31",
-            "https://github.com/orgs/other-org/discussions.atom",
-        ),
-        (
-            "https://github.com/orgs/another-org/discussions/31#discussioncomment-4048867",
-            "https://github.com/orgs/another-org/discussions.atom",
-        ),
-        (
-            "https://github.com/feedbin/feedbin/discussions",
-            "https://github.com/feedbin/feedbin/discussions.atom",
-        ),
-        (
-            "https://github.com/rails/rails/discussions/42",
-            "https://github.com/rails/rails/discussions.atom",
-        ),
-    ];
-    for (page, feed) in cases {
-        let stub = Stub::default().with(page, HTML).with(feed, ATOM);
-        assert_eq!(found(&stub, page).await, [feed], "{page}");
-    }
-}
-
-#[tokio::test]
-async fn finds_a_youtube_channel_id() {
-    let stub = Stub::default()
-        .with(
-            "https://www.youtube.com",
-            r#"<head><meta itemprop="channelId" content="abc"></head>"#,
-        )
-        .with(
-            "https://www.youtube.com/feeds/videos.xml?channel_id=abc",
-            ATOM,
+    #[tokio::test]
+    async fn finds_an_atom_feed() {
+        let stub = Stub::default().with("https://example.com/atom.xml", ATOM);
+        let response = stub.download("https://example.com/atom.xml").await;
+        assert_eq!(
+            urls(Xml::find(&stub, &response).await),
+            ["https://example.com/atom.xml"]
         );
-    assert_eq!(
-        found(&stub, "https://www.youtube.com").await,
-        ["https://www.youtube.com/feeds/videos.xml?channel_id=abc"]
-    );
+    }
+
+    #[tokio::test]
+    async fn finds_a_json_feed() {
+        let stub = Stub::default().with("https://example.com/feed.json", JSON_FEED);
+        let response = stub.download("https://example.com/feed.json").await;
+        assert_eq!(
+            urls(Xml::find(&stub, &response).await),
+            ["https://example.com/feed.json"]
+        );
+    }
+
+    #[tokio::test]
+    async fn finds_nothing_in_html() {
+        let stub = Stub::default().with("https://example.com", HTML);
+        let response = stub.download("https://example.com").await;
+        assert!(Xml::find(&stub, &response).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ignores_pages_that_only_mention_feed_markup() {
+        let stub = Stub::default().with(
+            "https://example.com",
+            r#"<html><body><script>const tag = "<rss>";</script></body></html>"#,
+        );
+        let response = stub.download("https://example.com").await;
+        assert!(Xml::find(&stub, &response).await.is_empty());
+    }
 }
 
-#[tokio::test]
-async fn finds_a_mastodon_profile_feed() {
-    let mut stub = Stub::default().with("https://example.social/@someone.rss", ATOM);
-    stub.responses.insert(
-        "https://example.social/@someone".into(),
-        Response {
-            url: "https://example.social/@someone".into(),
+mod meta_links {
+    use super::*;
+
+    #[tokio::test]
+    async fn finds_atom_links() {
+        let stub = Stub::default()
+            .with(
+                "https://example.com",
+                r#"<link rel="alternate" type="application/atom+xml" href="https://example2.com/comments/feed/"/>"#,
+            )
+            .with("https://example2.com/comments/feed/", ATOM);
+        let response = stub.download("https://example.com").await;
+        assert_eq!(
+            urls(MetaLinks::find(&stub, &response).await),
+            ["https://example2.com/comments/feed/"]
+        );
+    }
+
+    #[tokio::test]
+    async fn finds_rss_links() {
+        let stub = Stub::default()
+            .with(
+                "https://example.com",
+                r#"<link rel="alternate" type="application/atom+xml" href="/comments/feed/"/>"#,
+            )
+            .with("https://example.com/comments/feed/", ATOM);
+        let response = stub.download("https://example.com").await;
+        assert_eq!(
+            urls(MetaLinks::find(&stub, &response).await),
+            ["https://example.com/comments/feed/"]
+        );
+    }
+
+    #[tokio::test]
+    async fn finds_json_links() {
+        let stub = Stub::default()
+            .with(
+                "https://example.com",
+                r#"<link rel="alternate" type="application/json" href="/feeds/json/"/>"#,
+            )
+            .with("https://example.com/feeds/json/", JSON_FEED);
+        let response = stub.download("https://example.com").await;
+        assert_eq!(
+            urls(MetaLinks::find(&stub, &response).await),
+            ["https://example.com/feeds/json/"]
+        );
+    }
+}
+
+mod body_links {
+    use super::*;
+
+    #[tokio::test]
+    async fn finds_candidate_links() {
+        let mut stub = Stub::default();
+        let mut markup = String::new();
+        for kind in ["feed", "xml", "rss", "atom"] {
+            stub = stub.with(&format!("https://example.com/{kind}"), ATOM);
+            markup.push_str(&format!(r#"<a href="/{kind}">RSS</a>"#));
+        }
+        let stub = stub.with("https://example.com", &markup);
+        let response = stub.download("https://example.com").await;
+        assert_eq!(
+            urls(BodyLinks::find(&stub, &response).await),
+            [
+                "https://example.com/feed",
+                "https://example.com/xml",
+                "https://example.com/rss",
+                "https://example.com/atom",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_html_links() {
+        let stub = Stub::default()
+            .with("https://example.com", r#"<a href="/rss">RSS</a>"#)
+            .with("https://example.com/rss", HTML);
+        let response = stub.download("https://example.com").await;
+        assert!(BodyLinks::find(&stub, &response).await.is_empty());
+    }
+}
+
+mod known_pattern {
+    use super::*;
+
+    #[tokio::test]
+    async fn recognizes_known_patterns() {
+        let cases = [
+            (
+                "https://www.youtube.com/channel/abc",
+                "https://www.youtube.com/feeds/videos.xml?channel_id=abc",
+            ),
+            (
+                "https://www.youtube.com/user/abc",
+                "https://www.youtube.com/feeds/videos.xml?user=abc",
+            ),
+            (
+                "https://www.youtube.com/playlist?list=abc",
+                "https://www.youtube.com/feeds/videos.xml?playlist_id=abc",
+            ),
+            (
+                "https://www.reddit.com/r/abc",
+                "https://www.reddit.com/r/abc.rss",
+            ),
+            ("https://vimeo.com/abc", "https://vimeo.com/abc/videos/rss"),
+            (
+                "https://github.com/orgs/community/discussions",
+                "https://github.com/orgs/community/discussions.atom",
+            ),
+            (
+                "https://github.com/orgs/other-org/discussions/31",
+                "https://github.com/orgs/other-org/discussions.atom",
+            ),
+            (
+                "https://github.com/orgs/another-org/discussions/31#discussioncomment-4048867",
+                "https://github.com/orgs/another-org/discussions.atom",
+            ),
+            (
+                "https://github.com/feedbin/feedbin/discussions",
+                "https://github.com/feedbin/feedbin/discussions.atom",
+            ),
+            (
+                "https://github.com/rails/rails/discussions/42",
+                "https://github.com/rails/rails/discussions.atom",
+            ),
+        ];
+        for (page, feed) in cases {
+            let stub = Stub::default().with(page, HTML).with(feed, ATOM);
+            let response = stub.download(page).await;
+            assert_eq!(
+                urls(KnownPattern::find(&stub, &response).await),
+                [feed],
+                "{page}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn finds_channel_id() {
+        let stub = Stub::default()
+            .with(
+                "https://www.youtube.com",
+                r#"<head><meta itemprop="channelId" content="abc"></head>"#,
+            )
+            .with(
+                "https://www.youtube.com/feeds/videos.xml?channel_id=abc",
+                ATOM,
+            );
+        let response = stub.download("https://www.youtube.com").await;
+        assert_eq!(
+            urls(KnownPattern::find(&stub, &response).await),
+            ["https://www.youtube.com/feeds/videos.xml?channel_id=abc"]
+        );
+    }
+
+    #[tokio::test]
+    async fn finds_mastodon_profiles() {
+        let mut stub = Stub::default().with("https://example.social/@someone.rss", ATOM);
+        stub.responses.insert(
+            "https://example.social/@someone".into(),
+            Response {
+                url: "https://example.social/@someone".into(),
+                status: 200,
+                headers: vec![("server".into(), "Mastodon".into())],
+                body: HTML.into(),
+            },
+        );
+        let response = stub.download("https://example.social/@someone").await;
+        assert_eq!(
+            urls(KnownPattern::find(&stub, &response).await),
+            ["https://example.social/@someone.rss"]
+        );
+    }
+}
+
+mod guess {
+    use super::*;
+
+    #[tokio::test]
+    async fn guesses_feed() {
+        let stub = Stub::default()
+            .with("https://example.com", "")
+            .with("https://example.com/feed", ATOM);
+        let response = stub.download("https://example.com").await;
+        assert_eq!(
+            urls(Guess::find(&stub, &response).await),
+            ["https://example.com/feed"]
+        );
+    }
+
+    #[tokio::test]
+    async fn guesses_rss() {
+        let stub = Stub::default()
+            .with("https://example.com", "")
+            .with("https://example.com/rss", ATOM);
+        let response = stub.download("https://example.com").await;
+        assert_eq!(
+            urls(Guess::find(&stub, &response).await),
+            ["https://example.com/rss"]
+        );
+    }
+}
+
+mod feed_finder {
+    use super::*;
+
+    #[tokio::test]
+    async fn finds_a_feed_url() {
+        let stub = Stub::default().with("https://example.com/atom.xml", ATOM);
+        assert_eq!(
+            found(&stub, "https://example.com/atom.xml").await,
+            ["https://example.com/atom.xml"]
+        );
+    }
+
+    #[tokio::test]
+    async fn adds_a_missing_scheme() {
+        let stub = Stub::default().with("http://example.com/atom.xml", ATOM);
+        assert_eq!(
+            found(&stub, "example.com/atom.xml").await,
+            ["http://example.com/atom.xml"]
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_at_the_first_source_that_finds_feeds() {
+        let stub = Stub::default()
+            .with(
+                "https://example.com",
+                r#"<link rel="alternate" type="application/atom+xml" href="/atom.xml">
+                   <a href="/rss">RSS</a>"#,
+            )
+            .with("https://example.com/atom.xml", ATOM)
+            .with("https://example.com/rss", ATOM);
+        assert_eq!(
+            found(&stub, "https://example.com").await,
+            ["https://example.com/atom.xml"]
+        );
+        let requested = stub.requested.borrow();
+        assert!(!requested.contains(&"https://example.com/rss".to_string()));
+    }
+
+    #[tokio::test]
+    async fn falls_through_to_later_sources() {
+        let stub = Stub::default()
+            .with("https://example.com", r#"<a href="/about">About</a>"#)
+            .with("https://example.com/feed", ATOM);
+        assert_eq!(
+            found(&stub, "https://example.com").await,
+            ["https://example.com/feed"]
+        );
+    }
+
+    #[tokio::test]
+    async fn finds_nothing_on_a_page_without_feeds() {
+        let stub = Stub::default().with("https://example.com", HTML);
+        assert!(found(&stub, "https://example.com").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fails_when_the_url_itself_fails() {
+        let stub = Stub::default();
+        let result = find(&stub, "https://example.com").await;
+        assert!(matches!(result, Err(FindError::Status { status: 404, .. })));
+    }
+
+    #[test]
+    fn lists_options_without_fetching() {
+        let response = Response {
+            url: "https://example.com/".into(),
             status: 200,
-            headers: vec![("server".into(), "Mastodon".into())],
-            body: HTML.into(),
-        },
-    );
-    assert_eq!(
-        found(&stub, "https://example.social/@someone").await,
-        ["https://example.social/@someone.rss"]
-    );
-}
+            headers: Vec::new(),
+            body: br#"<link rel="alternate" type="application/rss+xml" href="/rss.xml">
+                      <a href="/atom">Atom</a>"#
+                .to_vec(),
+        };
+        assert_eq!(find_options(&response), ["https://example.com/rss.xml"]);
 
-#[tokio::test]
-async fn ignores_pages_that_only_mention_feed_markup() {
-    let stub = Stub::default().with(
-        "https://example.com",
-        r#"<html><body><script>const tag = "<rss>";</script></body></html>"#,
-    );
-    assert!(found(&stub, "https://example.com").await.is_empty());
-}
+        let response = Response {
+            body: br#"<a href="/atom">Atom</a><a href="/about">About</a>"#.to_vec(),
+            ..response
+        };
+        assert_eq!(find_options(&response), ["https://example.com/atom"]);
+    }
 
-#[tokio::test]
-async fn finds_nothing_on_a_page_without_feeds() {
-    let stub = Stub::default().with("https://example.com", HTML);
-    assert!(found(&stub, "https://example.com").await.is_empty());
-}
+    #[test]
+    fn finding_can_move_between_threads() {
+        fn assert_send<T: Send>(_: T) {}
+        let fetcher = SendStub;
+        assert_send(find(&fetcher, "https://example.com"));
+    }
 
-#[tokio::test]
-async fn fails_when_the_url_itself_fails() {
-    let stub = Stub::default();
-    let result = find(&stub, "https://example.com").await;
-    assert!(matches!(result, Err(FindError::Status { status: 404, .. })));
-}
+    /// A `Sync` fetcher, for checking that `find`'s future is `Send`.
+    struct SendStub;
 
-#[test]
-fn lists_options_without_fetching() {
-    let response = Response {
-        url: "https://example.com/".into(),
-        status: 200,
-        headers: Vec::new(),
-        body: br#"<link rel="alternate" type="application/rss+xml" href="/rss.xml">
-                  <a href="/atom">Atom</a>"#
-            .to_vec(),
-    };
-    assert_eq!(find_options(&response), ["https://example.com/rss.xml"]);
-
-    let response = Response {
-        body: br#"<a href="/atom">Atom</a><a href="/about">About</a>"#.to_vec(),
-        ..response
-    };
-    assert_eq!(find_options(&response), ["https://example.com/atom"]);
+    impl Fetch for SendStub {
+        async fn fetch(&self, url: &str) -> Result<Response, FetchError> {
+            Err(FetchError::Request(url.to_string()))
+        }
+    }
 }
 
 async fn found(stub: &Stub, url: &str) -> Vec<String> {
-    find(stub, url)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|found| found.url)
-        .collect()
+    urls(find(stub, url).await.unwrap())
+}
+
+fn urls(found: Vec<mariner_feeds::finder::FoundFeed>) -> Vec<String> {
+    found.into_iter().map(|found| found.url).collect()
 }
 
 /// Serves registered bodies with status 200, and 404 for anything else.
@@ -306,6 +392,11 @@ impl Stub {
             },
         );
         self
+    }
+
+    /// Fetches `url` the way a source receives it.
+    async fn download(&self, url: &str) -> Response {
+        self.fetch(url).await.unwrap()
     }
 }
 
