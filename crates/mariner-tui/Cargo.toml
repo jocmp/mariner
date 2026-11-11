@@ -19,6 +19,7 @@ mariner-condense = { path = "../mariner-condense" }
 mariner-core = { path = "../mariner-core" }
 mariner-feeds = { path = "../mariner-feeds" }
 ratatui.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 unicode-width.workspace = true
 

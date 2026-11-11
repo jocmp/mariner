@@ -1864,6 +1864,7 @@ dependencies = [
  "mariner-core",
  "mariner-feeds",
  "ratatui",
+ "serde_json",
  "tempfile",
  "tokio",
  "unicode-width",

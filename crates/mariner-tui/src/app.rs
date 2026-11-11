@@ -112,6 +112,8 @@ pub struct Reader {
     pub feed_html: Option<String>,
     /// Whether the full text is showing.
     pub full_text: bool,
+    /// Whether condense's output shows instead of the rendered article.
+    pub document: bool,
     pub parts: Vec<Part>,
     pub scroll: u16,
     /// The furthest the article scrolls at the last drawn size.
@@ -201,6 +203,7 @@ impl<'a> App<'a> {
             KeyCode::Char('o') => self.open_in_browser(),
             KeyCode::Char('L') => self.show_links(),
             KeyCode::Char('c') => self.toggle_full_text(),
+            KeyCode::Char('/') => self.toggle_document(),
             _ => {}
         }
     }
@@ -404,6 +407,7 @@ impl<'a> App<'a> {
                     article: content.article,
                     feed_html: content.content_html,
                     full_text: false,
+                    document: false,
                     parts,
                     scroll: 0,
                     max_scroll: 0,
@@ -594,8 +598,26 @@ impl<'a> App<'a> {
 
     /// Shows the open article's full text, or the feed's content.
     fn show_content(&mut self, full_text: bool) {
+        if let Some(reader) = &mut self.reader {
+            reader.full_text = full_text;
+        }
+        self.rebuild_reader();
+    }
+
+    /// Switches the open article between its rendering and condense's
+    /// output for the same content.
+    fn toggle_document(&mut self) {
+        if let Some(reader) = &mut self.reader {
+            reader.document = !reader.document;
+        }
+        self.rebuild_reader();
+    }
+
+    /// Rebuilds the reader for its content (the feed's or the full text) and
+    /// its view (rendered, or condense's output).
+    fn rebuild_reader(&mut self) {
         let Some(reader) = &self.reader else { return };
-        let html = if full_text {
+        let html = if reader.full_text {
             self.full_texts.get(&reader.article.id).cloned().flatten()
         } else {
             reader.feed_html.clone()
@@ -604,12 +626,16 @@ impl<'a> App<'a> {
             article: reader.article.clone(),
             content_html: html,
         };
-        let parts = reader::parts(&content, self.feed_title(&reader.article.feed_id));
-        self.images
-            .request(self.runtime, reader::image_urls(&parts));
+        let parts = if reader.document {
+            reader::document_parts(&content)
+        } else {
+            let parts = reader::parts(&content, self.feed_title(&reader.article.feed_id));
+            self.images
+                .request(self.runtime, reader::image_urls(&parts));
+            parts
+        };
         if let Some(reader) = &mut self.reader {
             reader.parts = parts;
-            reader.full_text = full_text;
             reader.scroll = 0;
         }
     }
@@ -1089,6 +1115,39 @@ mod tests {
 
         app.extracted("b".into(), Ok(None));
         assert_eq!(app.status, "No full text found for this article");
+    }
+
+    #[test]
+    fn shows_condenses_output_for_whichever_content_is_open() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.open_article();
+
+        press(&mut app, KeyCode::Char('/'));
+        let screen = render(&mut app, 120);
+        assert!(screen.contains("Article · condense"), "{screen}");
+        assert!(screen.contains(r#""blocks": ["#), "{screen}");
+        assert!(
+            screen.contains(r#""text": "Hello world, see more.""#),
+            "{screen}"
+        );
+
+        let id = app.reader.as_ref().unwrap().article.id.clone();
+        app.extracted(id, Ok(Some("<p>The whole story.</p>".into())));
+        let screen = render(&mut app, 120);
+        assert!(
+            screen.contains("Article · full text · condense"),
+            "{screen}"
+        );
+        assert!(screen.contains(r#""text": "The whole story.""#), "{screen}");
+
+        press(&mut app, KeyCode::Char('/'));
+        let screen = render(&mut app, 120);
+        assert!(
+            screen.contains("The whole story.") && !screen.contains(r#""blocks""#),
+            "{screen}"
+        );
     }
 
     fn tempfile_dir() -> tempfile::TempDir {

@@ -103,6 +103,26 @@ pub fn parts(content: &ArticleContent, feed_title: &str) -> Vec<Part> {
     parts
 }
 
+/// The article's content as condense outputs it: its blocks as JSON, for
+/// seeing what the reader is working from.
+pub fn document_parts(content: &ArticleContent) -> Vec<Part> {
+    let html = content
+        .content_html
+        .as_deref()
+        .or(content.article.summary.as_deref())
+        .unwrap_or_default();
+    let base_url = content.article.url.as_deref().unwrap_or_default();
+    let text = match mariner_condense::condense(html, base_url) {
+        Ok(document) => serde_json::to_string_pretty(&document)
+            .unwrap_or_else(|error| format!("couldn't serialize: {error}")),
+        Err(error) => format!("condense failed: {error}"),
+    };
+    let style = Style::default().fg(Color::Gray);
+    text.lines()
+        .map(|line| Part::Text(vec![Segment::plain(line, style)]))
+        .collect()
+}
+
 /// The URLs of the article's images, to fetch.
 pub fn image_urls(parts: &[Part]) -> Vec<String> {
     parts
