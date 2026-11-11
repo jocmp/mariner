@@ -1,4 +1,4 @@
-//! Subscribing to and editing feeds.
+//! Subscribing to, editing and removing feeds and tags.
 
 use mariner_feeds::finder::FoundFeed;
 use rusqlite::{Transaction, params};
@@ -74,6 +74,64 @@ pub(super) async fn update(
         })
         .await?;
     Ok(feed)
+}
+
+/// Renames a tag on every feed. A feed that already has the new tag keeps
+/// one tagging.
+pub(super) async fn rename_tag(database: &Database, old_name: &str, new_name: &str) -> Result<()> {
+    let (old_name, new_name) = (old_name.to_string(), new_name.to_string());
+    database
+        .write(move |connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "UPDATE OR IGNORE taggings SET name = ?2, id = feed_id || ':' || ?2
+                 WHERE name = ?1",
+                [&old_name, &new_name],
+            )?;
+            transaction.execute("DELETE FROM taggings WHERE name = ?1", [&old_name])?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO tags (name, expanded)
+                 SELECT ?2, expanded FROM tags WHERE name = ?1",
+                [&old_name, &new_name],
+            )?;
+            transaction.execute("DELETE FROM tags WHERE name = ?1", [&old_name])?;
+            transaction.commit()
+        })
+        .await?;
+    Ok(())
+}
+
+/// Deletes the feed with its articles and their statuses. Unsubscribing
+/// isn't pruning: without the statuses, re-adding the feed brings its
+/// articles back unread.
+pub(super) async fn remove(database: &Database, id: &str) -> Result<()> {
+    let id = id.to_string();
+    database
+        .write(move |connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "DELETE FROM article_statuses
+                 WHERE article_id IN (SELECT id FROM articles WHERE feed_id = ?1)",
+                [&id],
+            )?;
+            transaction.execute("DELETE FROM feeds WHERE id = ?1", [&id])?;
+            transaction.commit()
+        })
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn remove_tag(database: &Database, name: &str) -> Result<()> {
+    let name = name.to_string();
+    database
+        .write(move |connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute("DELETE FROM taggings WHERE name = ?1", [&name])?;
+            transaction.execute("DELETE FROM tags WHERE name = ?1", [&name])?;
+            transaction.commit()
+        })
+        .await?;
+    Ok(())
 }
 
 /// A local feed's id: the SHA-1 of its URL, so re-adding a feed gives it

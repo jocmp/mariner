@@ -1,4 +1,5 @@
-//! An existing subscription, found before fetching anything.
+//! An existing subscription, found before asking the delegate to fetch
+//! anything.
 
 use crate::database::Database;
 use crate::model::Feed;

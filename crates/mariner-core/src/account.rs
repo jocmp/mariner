@@ -1,132 +1,248 @@
-//! Accounts: where feeds come from and where changes go. Each account has
-//! its own database; how it fetches and syncs depends on its kind.
+//! An account: where feeds come from and where changes go.
+//!
+//! `Account` owns the account's database and the work every kind of
+//! account shares: storing feeds and articles, statuses, tags, and finding
+//! an existing subscription. For what differs between kinds (finding
+//! feeds, fetching them, telling a sync service about changes) it reaches
+//! out to its delegate.
 
-use mariner_feeds::finder::Fetch;
+use mariner_feeds::finder::{Fetch, FoundFeed};
 
 use crate::database::Database;
 use crate::model::{AddFeedResult, Feed};
 use crate::{Result, queries};
 
+mod articles;
+mod existing_feed;
+mod feeds;
 mod local;
+mod statuses;
 
-pub use local::LocalAccount;
+use existing_feed::ExistingFeed;
+use local::LocalAccountDelegate;
+pub(crate) use statuses::Status;
 
-/// The changes an account knows how to make. Each kind of account
-/// implements them its own way: a local account in its database alone, a
-/// sync account on its service too.
-pub trait AccountDelegate {
-    fn mark_read(&self, article_ids: &[String]) -> impl Future<Output = Result<()>> + Send;
-
-    fn mark_unread(&self, article_ids: &[String]) -> impl Future<Output = Result<()>> + Send;
-
-    fn add_star(&self, article_ids: &[String]) -> impl Future<Output = Result<()>> + Send;
-
-    fn remove_star(&self, article_ids: &[String]) -> impl Future<Output = Result<()>> + Send;
-
-    /// Subscribes to the feed `url` leads to, with an optional title and
-    /// tags.
-    fn add_feed(
-        &self,
-        url: &str,
-        title: Option<&str>,
-        tag_names: Option<&[String]>,
-    ) -> impl Future<Output = Result<AddFeedResult>> + Send;
-
-    /// Renames a feed and replaces its tags.
-    fn update_feed(
-        &self,
-        feed: &Feed,
-        title: &str,
-        tag_names: &[String],
-    ) -> impl Future<Output = Result<Feed>> + Send;
-
-    fn update_tag(&self, old_name: &str, new_name: &str)
-    -> impl Future<Output = Result<()>> + Send;
-
-    /// Unsubscribes, deleting the feed's articles, starred ones included.
-    fn remove_feed(&self, feed: &Feed) -> impl Future<Output = Result<()>> + Send;
-
-    /// Removes the tag from every feed.
-    fn remove_tag(&self, name: &str) -> impl Future<Output = Result<()>> + Send;
-}
-
-/// An account of any kind. (Traits with async methods can't be used as
-/// `dyn`, so this enum dispatches to each kind.)
-pub enum Account<F> {
-    Local(LocalAccount<F>),
+pub struct Account<F> {
+    database: Database,
+    delegate: Delegate<F>,
 }
 
 impl<F: Fetch + Send + Sync> Account<F> {
-    /// Every subscribed feed, by title.
-    pub async fn feeds(&self) -> Result<Vec<Feed>> {
-        queries::feeds(self.database()).await
+    /// An account that lives only on this device, backed by `database`
+    /// (opened as [`Kind::Account`]) and fetching with `fetcher`.
+    ///
+    /// [`Kind::Account`]: crate::Kind::Account
+    pub fn local(database: Database, fetcher: F) -> Self {
+        Account {
+            database,
+            delegate: Delegate::Local(LocalAccountDelegate::new(fetcher)),
+        }
     }
 
     /// The account's database, for queries core doesn't offer yet.
     pub fn database(&self) -> &Database {
-        match self {
-            Account::Local(account) => account.database(),
-        }
-    }
-}
-
-impl<F: Fetch + Send + Sync> AccountDelegate for Account<F> {
-    async fn mark_read(&self, article_ids: &[String]) -> Result<()> {
-        match self {
-            Account::Local(account) => account.mark_read(article_ids).await,
-        }
+        &self.database
     }
 
-    async fn mark_unread(&self, article_ids: &[String]) -> Result<()> {
-        match self {
-            Account::Local(account) => account.mark_unread(article_ids).await,
-        }
+    /// Every subscribed feed, by title.
+    pub async fn feeds(&self) -> Result<Vec<Feed>> {
+        queries::feeds(&self.database).await
     }
 
-    async fn add_star(&self, article_ids: &[String]) -> Result<()> {
-        match self {
-            Account::Local(account) => account.add_star(article_ids).await,
-        }
+    pub async fn mark_read(&self, article_ids: &[String]) -> Result<()> {
+        self.set_status(article_ids, Status::Read).await
     }
 
-    async fn remove_star(&self, article_ids: &[String]) -> Result<()> {
-        match self {
-            Account::Local(account) => account.remove_star(article_ids).await,
-        }
+    pub async fn mark_unread(&self, article_ids: &[String]) -> Result<()> {
+        self.set_status(article_ids, Status::Unread).await
     }
 
-    async fn add_feed(
+    pub async fn add_star(&self, article_ids: &[String]) -> Result<()> {
+        self.set_status(article_ids, Status::Starred).await
+    }
+
+    pub async fn remove_star(&self, article_ids: &[String]) -> Result<()> {
+        self.set_status(article_ids, Status::Unstarred).await
+    }
+
+    /// Subscribes to the feed `url` leads to, with an optional title and
+    /// tags. A feed already subscribed at `url` is returned as is.
+    pub async fn add_feed(
         &self,
         url: &str,
         title: Option<&str>,
         tag_names: Option<&[String]>,
     ) -> Result<AddFeedResult> {
+        if let Some(feed) = ExistingFeed::find(&self.database, url).await? {
+            return Ok(AddFeedResult::Added(feed));
+        }
+        let tag_names = tag_names.unwrap_or_default();
+        self.delegate.add_feed(self, url, title, tag_names).await
+    }
+
+    /// Renames a feed and replaces its tags.
+    pub async fn update_feed(
+        &self,
+        feed: &Feed,
+        title: &str,
+        tag_names: &[String],
+    ) -> Result<Feed> {
+        self.delegate
+            .update_feed(self, feed, title, tag_names)
+            .await?;
+        feeds::update(&self.database, &feed.id, title, tag_names.to_vec()).await
+    }
+
+    /// Renames a tag on every feed, merging it into one of the same name.
+    pub async fn update_tag(&self, old_name: &str, new_name: &str) -> Result<()> {
+        self.delegate.update_tag(self, old_name, new_name).await?;
+        feeds::rename_tag(&self.database, old_name, new_name).await
+    }
+
+    /// Unsubscribes, deleting the feed's articles, starred ones included.
+    pub async fn remove_feed(&self, feed: &Feed) -> Result<()> {
+        self.delegate.remove_feed(self, feed).await?;
+        feeds::remove(&self.database, &feed.id).await
+    }
+
+    /// Removes the tag from every feed.
+    pub async fn remove_tag(&self, name: &str) -> Result<()> {
+        self.delegate.remove_tag(self, name).await?;
+        feeds::remove_tag(&self.database, name).await
+    }
+
+    /// Stores a feed the delegate found, with its tags and current entries.
+    pub(crate) async fn subscribe(
+        &self,
+        found: FoundFeed,
+        title: Option<&str>,
+        tag_names: &[String],
+    ) -> Result<AddFeedResult> {
+        if let Some(feed) = ExistingFeed::find(&self.database, &found.url).await? {
+            return Ok(AddFeedResult::Added(feed));
+        }
+        let feed = feeds::subscribe(&self.database, found, title, tag_names.to_vec()).await?;
+        Ok(AddFeedResult::Added(feed))
+    }
+
+    async fn set_status(&self, article_ids: &[String], status: Status) -> Result<()> {
+        self.delegate.set_status(self, article_ids, status).await?;
+        statuses::set(&self.database, article_ids, status).await
+    }
+}
+
+/// Each kind of account's delegate. (Traits with async methods can't be
+/// used as `dyn`, so this enum dispatches to each kind.)
+enum Delegate<F> {
+    Local(LocalAccountDelegate<F>),
+}
+
+impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
+    async fn add_feed(
+        &self,
+        account: &Account<F>,
+        url: &str,
+        title: Option<&str>,
+        tag_names: &[String],
+    ) -> Result<AddFeedResult> {
         match self {
-            Account::Local(account) => account.add_feed(url, title, tag_names).await,
+            Delegate::Local(delegate) => delegate.add_feed(account, url, title, tag_names).await,
         }
     }
 
-    async fn update_feed(&self, feed: &Feed, title: &str, tag_names: &[String]) -> Result<Feed> {
+    async fn set_status(
+        &self,
+        account: &Account<F>,
+        article_ids: &[String],
+        status: Status,
+    ) -> Result<()> {
         match self {
-            Account::Local(account) => account.update_feed(feed, title, tag_names).await,
+            Delegate::Local(delegate) => delegate.set_status(account, article_ids, status).await,
         }
     }
 
-    async fn update_tag(&self, old_name: &str, new_name: &str) -> Result<()> {
+    async fn update_feed(
+        &self,
+        account: &Account<F>,
+        feed: &Feed,
+        title: &str,
+        tag_names: &[String],
+    ) -> Result<()> {
         match self {
-            Account::Local(account) => account.update_tag(old_name, new_name).await,
+            Delegate::Local(delegate) => {
+                delegate.update_feed(account, feed, title, tag_names).await
+            }
         }
     }
 
-    async fn remove_feed(&self, feed: &Feed) -> Result<()> {
+    async fn update_tag(&self, account: &Account<F>, old_name: &str, new_name: &str) -> Result<()> {
         match self {
-            Account::Local(account) => account.remove_feed(feed).await,
+            Delegate::Local(delegate) => delegate.update_tag(account, old_name, new_name).await,
         }
     }
 
-    async fn remove_tag(&self, name: &str) -> Result<()> {
+    async fn remove_feed(&self, account: &Account<F>, feed: &Feed) -> Result<()> {
         match self {
-            Account::Local(account) => account.remove_tag(name).await,
+            Delegate::Local(delegate) => delegate.remove_feed(account, feed).await,
         }
     }
+
+    async fn remove_tag(&self, account: &Account<F>, name: &str) -> Result<()> {
+        match self {
+            Delegate::Local(delegate) => delegate.remove_tag(account, name).await,
+        }
+    }
+}
+
+/// What each kind of account does its own way. Every method gets the
+/// account, for the work all accounts share. Changes run before the
+/// account applies them locally, so a sync account can refuse one.
+///
+/// Status changes must work offline: a sync account queues them in its
+/// outbox (`article_sync_statuses`) here and pushes the outbox at the
+/// start of its next refresh, before pulling, so local changes win.
+pub(crate) trait AccountDelegate<F> {
+    /// Finds what `url` leads to, subscribing through
+    /// [`Account::subscribe`] when it's one feed.
+    fn add_feed(
+        &self,
+        account: &Account<F>,
+        url: &str,
+        title: Option<&str>,
+        tag_names: &[String],
+    ) -> impl Future<Output = Result<AddFeedResult>> + Send;
+
+    fn set_status(
+        &self,
+        account: &Account<F>,
+        article_ids: &[String],
+        status: Status,
+    ) -> impl Future<Output = Result<()>> + Send;
+
+    fn update_feed(
+        &self,
+        account: &Account<F>,
+        feed: &Feed,
+        title: &str,
+        tag_names: &[String],
+    ) -> impl Future<Output = Result<()>> + Send;
+
+    fn update_tag(
+        &self,
+        account: &Account<F>,
+        old_name: &str,
+        new_name: &str,
+    ) -> impl Future<Output = Result<()>> + Send;
+
+    fn remove_feed(
+        &self,
+        account: &Account<F>,
+        feed: &Feed,
+    ) -> impl Future<Output = Result<()>> + Send;
+
+    fn remove_tag(
+        &self,
+        account: &Account<F>,
+        name: &str,
+    ) -> impl Future<Output = Result<()>> + Send;
 }

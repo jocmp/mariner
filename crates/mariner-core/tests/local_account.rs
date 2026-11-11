@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use futures_executor::block_on;
-use mariner_core::{Account, AccountDelegate, AddFeedResult, Database, Feed, Kind, LocalAccount};
+use mariner_core::{Account, AddFeedResult, Database, Feed, Kind};
 use mariner_feeds::finder::{Fetch, FetchError, Response};
 
 const FEED_URL: &str = "https://example.com/feed.xml";
@@ -303,8 +303,8 @@ struct Article {
 }
 
 async fn articles(account: &Account<Shared>) -> Vec<Article> {
-    let Account::Local(local) = account;
-    database(local)
+    account
+        .database()
         .read(|connection| {
             let mut statement = connection.prepare(
                 "SELECT a.id, a.title, a.content_html, a.enclosure_type, a.published_at,
@@ -330,8 +330,8 @@ async fn articles(account: &Account<Shared>) -> Vec<Article> {
 }
 
 async fn enclosures(account: &Account<Shared>) -> Vec<(String, String, Option<i64>)> {
-    let Account::Local(local) = account;
-    database(local)
+    account
+        .database()
         .read(|connection| {
             connection
                 .prepare("SELECT url, type, itunes_duration_seconds FROM enclosures")?
@@ -343,8 +343,8 @@ async fn enclosures(account: &Account<Shared>) -> Vec<(String, String, Option<i6
 }
 
 async fn status_count(account: &Account<Shared>) -> i64 {
-    let Account::Local(local) = account;
-    database(local)
+    account
+        .database()
         .read(|connection| {
             connection.query_row("SELECT count(*) FROM article_statuses", [], |row| {
                 row.get(0)
@@ -354,17 +354,13 @@ async fn status_count(account: &Account<Shared>) -> i64 {
         .unwrap()
 }
 
-fn database(account: &LocalAccount<Shared>) -> &Database {
-    account.database()
-}
-
 async fn local_account(stub: Stub) -> (tempfile::TempDir, Account<Shared>, Arc<Stub>) {
     let dir = tempfile::tempdir().unwrap();
     let database = Database::open(dir.path().join("local.db"), Kind::Account)
         .await
         .unwrap();
     let stub = Arc::new(stub);
-    let account = Account::Local(LocalAccount::new(database, Shared(Arc::clone(&stub))));
+    let account = Account::local(database, Shared(Arc::clone(&stub)));
     (dir, account, stub)
 }
 

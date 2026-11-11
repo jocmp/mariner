@@ -12,7 +12,7 @@ mod model;
 mod queries;
 mod time;
 
-pub use account::{Account, AccountDelegate, LocalAccount};
+pub use account::Account;
 pub use database::{Database, Kind};
 pub use error::{Error, Result};
 pub use model::{AddFeedResult, Feed, FeedChoice};

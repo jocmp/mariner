@@ -5,8 +5,9 @@ use rusqlite::params;
 use crate::database::Database;
 use crate::{Result, time};
 
-#[derive(Clone, Copy)]
-pub(super) enum Status {
+/// A change to an article's read or starred state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Status {
     Read,
     Unread,
     Starred,
