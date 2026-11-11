@@ -1,4 +1,4 @@
-//! Tests ported from the fixtures' original suite: one module per test
+//! Tests ported from FeedParser's suite: one module per test
 //! class, grouped as that suite groups them. Each checks the first entry
 //! against the values its fixture was written to test, kept only where
 //! they agree with the reference output; text is compared trimmed, and
@@ -99,6 +99,6 @@ pub(crate) fn first_entry(fixture: &str) -> Entry {
 }
 
 fn read(fixture: &str) -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/rssparser");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/feed_parser");
     std::fs::read(format!("{path}/{fixture}")).unwrap()
 }
