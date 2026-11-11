@@ -7,10 +7,12 @@ pub mod finder;
 mod json_feed;
 mod media;
 mod model;
+mod parser;
 mod rules;
 mod sax;
 mod tree;
 mod xhtml;
+mod xml_feed;
 
 pub use model::{
     Enclosure, Entry, Feed, Format, Itunes, Media, MediaContent, MediaThumbnail, Youtube,
@@ -34,8 +36,8 @@ pub fn parse(bytes: &[u8]) -> Result<Feed, Error> {
 pub fn parse_with_charset(bytes: &[u8], charset: Option<&str>) -> Result<Feed, Error> {
     let decoded = decode::decode(bytes, charset);
     let text = decoded.text.trim_start();
-    let feed = if let Some(flavor) = rules::detect(text) {
-        sax::parse(text, flavor, decoded.declared_encoding)
+    let feed = if let Some(parser) = parser::detect(text) {
+        xml_feed::parse(text, parser, decoded.declared_encoding)
     } else if json_feed::is_json_feed(text) {
         json_feed::parse(text)?
     } else {

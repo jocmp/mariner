@@ -1,5 +1,5 @@
-//! Walks an XML tree with the rules in `rules`, building objects the way a
-//! SAX handler would, then turns them into the model.
+//! Walks an XML tree with a parser's classes, building objects the way a
+//! SAX handler would.
 //!
 //! - Each rule fills its field from its first matching element only, even
 //!   when that element is empty (it then fills nothing, and later
@@ -14,20 +14,94 @@ use chrono::{DateTime, Utc};
 
 use crate::date;
 use crate::media;
-use crate::model::{Enclosure, Entry, Feed, Format, Itunes, Media, Youtube};
-use crate::rules::{self, Class, Field, Flavor, Kind, Rule};
+use crate::model::{Enclosure, Media};
+use crate::parser::Parser;
+use crate::rules::{Class, Field, Kind, Rule};
 use crate::tree::{self, Element, Node};
 use crate::xhtml;
 
-pub(crate) fn parse(text: &str, flavor: Flavor, declared_encoding: bool) -> Feed {
+/// Parses `text` with `parser`, returning the document's root object.
+pub(crate) fn parse(text: &str, parser: &dyn Parser, declared_encoding: bool) -> Handler {
     let mut nodes = tree::parse(text);
-    if flavor.preprocesses() {
+    if parser.preprocesses() {
         tree::remove_namespaces(&mut nodes);
         xhtml::flatten_entry_content(&mut nodes, declared_encoding);
     }
-    let mut handler = Handler::new(Class::Feed(flavor));
+    let mut handler = Handler::new(parser.feed());
     handler.walk(&nodes);
-    handler.feed(flavor)
+    handler
+}
+
+/// A read-only view of one parsed object.
+#[derive(Clone, Copy)]
+pub(crate) struct Parsed<'a> {
+    handler: &'a Handler,
+    index: usize,
+}
+
+impl<'a> Parsed<'a> {
+    pub fn single(&self, field: Field) -> Option<&'a str> {
+        self.object_data()
+            .singles
+            .get(&field)
+            .and_then(|value| value.as_deref())
+    }
+
+    /// Every value of a field, including occurrences without one.
+    pub fn multi(&self, field: Field) -> impl Iterator<Item = Option<&'a str>> + use<'a> {
+        self.object_data()
+            .multis
+            .get(&field)
+            .into_iter()
+            .flatten()
+            .map(|value| value.as_deref())
+    }
+
+    pub fn object(&self, field: Field) -> Option<Parsed<'a>> {
+        let index = *self.object_data().objects.get(&field)?;
+        Some(Parsed {
+            handler: self.handler,
+            index,
+        })
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = Parsed<'a>> + use<'a> {
+        let handler = self.handler;
+        self.object_data()
+            .entries
+            .iter()
+            .map(move |&index| Parsed { handler, index })
+    }
+
+    pub fn published(&self) -> Option<DateTime<Utc>> {
+        self.object_data().published
+    }
+
+    pub fn updated(&self) -> Option<DateTime<Utc>> {
+        self.object_data().updated
+    }
+
+    /// The element's own text, for classes that keep it.
+    pub fn text(&self) -> Option<&'a str> {
+        self.object_data().text.as_deref()
+    }
+
+    /// The class's kept attribute.
+    pub fn attribute(&self) -> Option<&'a str> {
+        self.object_data().attribute.as_deref()
+    }
+
+    pub fn media(&self) -> Option<&'a Media> {
+        self.object_data().media.as_ref()
+    }
+
+    pub fn enclosures(&self) -> &'a [Enclosure] {
+        &self.object_data().enclosures
+    }
+
+    fn object_data(&self) -> &'a Object {
+        &self.handler.objects[self.index]
+    }
 }
 
 #[derive(Default)]
@@ -38,22 +112,13 @@ struct Object {
     entries: Vec<usize>,
     published: Option<DateTime<Utc>>,
     updated: Option<DateTime<Utc>>,
-    /// Guid text, and its `isPermaLink` attribute.
-    guid: Option<String>,
-    perma_link: Option<String>,
+    /// The element's own text and kept attribute, for classes that keep
+    /// them.
+    text: Option<String>,
+    attribute: Option<String>,
     /// Read from an entry's element directly, outside the rules.
     media: Option<Media>,
     enclosures: Vec<Enclosure>,
-}
-
-impl Object {
-    fn single(&self, field: Field) -> Option<&str> {
-        self.singles.get(&field).and_then(|value| value.as_deref())
-    }
-
-    fn multi(&self, field: Field) -> impl Iterator<Item = &Option<String>> {
-        self.multis.get(&field).into_iter().flatten()
-    }
 }
 
 struct Frame {
@@ -62,15 +127,23 @@ struct Frame {
     buffer: Option<String>,
 }
 
-struct Handler {
+pub(crate) struct Handler {
     objects: Vec<Object>,
-    classes: Vec<Class>,
+    classes: Vec<&'static Class>,
     stack: Vec<Frame>,
     parsed: HashSet<(usize, *const Rule)>,
 }
 
 impl Handler {
-    fn new(root: Class) -> Self {
+    /// The document's root object.
+    pub fn root(&self) -> Parsed<'_> {
+        Parsed {
+            handler: self,
+            index: 0,
+        }
+    }
+
+    fn new(root: &'static Class) -> Self {
         Handler {
             objects: vec![Object::default()],
             classes: vec![root],
@@ -119,9 +192,10 @@ impl Handler {
     fn start(&mut self, name: &str, attrs: &[(String, String)]) {
         let mut object = self.stack.last().expect("root frame").object;
 
-        let collection = rules::rules(self.classes[object]).iter().find(|rule| {
-            matches!(rule.kind, Kind::Collection(_)) && rule.tag == name && rule.matches(attrs)
-        });
+        let collection = self.classes[object]
+            .rules
+            .iter()
+            .find(|rule| rule.kind.is_collection() && rule.tag == name && rule.matches(attrs));
         if let Some(rule) = collection {
             let Kind::Collection(class) = rule.kind else {
                 unreachable!()
@@ -134,9 +208,10 @@ impl Handler {
             });
         }
 
-        let candidates = rules::rules(self.classes[object])
+        let candidates = self.classes[object]
+            .rules
             .iter()
-            .filter(|rule| !matches!(rule.kind, Kind::Collection(_)) && rule.tag == name);
+            .filter(|rule| !rule.kind.is_collection() && rule.tag == name);
         for rule in candidates.clone() {
             if let Some(attribute) = rule.value.filter(|_| rule.matches(attrs))
                 && !self.parsed.contains(&(object, rule as *const Rule))
@@ -186,8 +261,8 @@ impl Handler {
                 }
                 Kind::Collection(_) => {}
                 Kind::Object(class) => {
-                    if class == Class::Guid {
-                        self.objects[frame.object].guid = frame.buffer;
+                    if class.keeps_text {
+                        self.objects[frame.object].text = frame.buffer;
                     }
                     self.objects[parent]
                         .objects
@@ -204,16 +279,16 @@ impl Handler {
         }
     }
 
-    fn new_object(&mut self, class: Class, attrs: &[(String, String)]) -> usize {
+    fn new_object(&mut self, class: &'static Class, attrs: &[(String, String)]) -> usize {
         let mut object = Object::default();
-        if class == Class::Guid
+        if let Some(name) = class.attribute
             && attrs
                 .iter()
-                .any(|(key, value)| key == "isPermaLink" || value == "isPermaLink")
+                .any(|(key, value)| key == name || value == name)
         {
-            object.perma_link = attrs
+            object.attribute = attrs
                 .iter()
-                .find(|(key, _)| key == "isPermaLink")
+                .find(|(key, _)| key == name)
                 .map(|(_, value)| value.clone());
         }
         self.objects.push(object);
@@ -223,156 +298,27 @@ impl Handler {
 
     fn set(&mut self, object: usize, rule: &Rule, value: Option<String>) {
         let object = &mut self.objects[object];
-        match (rule.field, rule.kind) {
-            (Field::Published, _) => {
+        match rule.field {
+            Field::Published => {
                 if let Some(time) = value.as_deref().and_then(date::parse) {
                     object.published = Some(object.published.map_or(time, |old| old.min(time)));
                 }
             }
-            (Field::Updated, _) => {
+            Field::Updated => {
                 if let Some(time) = value.as_deref().and_then(date::parse) {
                     object.updated = Some(object.updated.map_or(time, |old| old.max(time)));
                 }
             }
-            (field, Kind::Multi) => object.multis.entry(field).or_default().push(value),
-            (field, _) => {
+            field if rule.kind.is_multi() => object.multis.entry(field).or_default().push(value),
+            field => {
                 object.singles.insert(field, value);
             }
         }
     }
 
     fn mark_parsed(&mut self, object: usize, rule: &Rule) {
-        if rule.kind != Kind::Multi {
+        if !rule.kind.is_multi() {
             self.parsed.insert((object, rule as *const Rule));
         }
     }
-
-    fn feed(&self, flavor: Flavor) -> Feed {
-        let feed = &self.objects[0];
-        let image = feed
-            .objects
-            .get(&Field::Image)
-            .map(|&index| &self.objects[index]);
-        let (site_url, self_url) = match flavor {
-            Flavor::Atom => {
-                let self_url = feed.single(Field::FeedUrl);
-                let site_url = feed.single(Field::Url).or_else(|| {
-                    feed.multi(Field::Links)
-                        .filter(|link| link.as_deref() != self_url)
-                        .last()
-                        .and_then(|link| link.as_deref())
-                });
-                (site_url, self_url)
-            }
-            Flavor::AtomFeedBurner => (
-                feed.single(Field::UrlTextHtml)
-                    .or(feed.single(Field::UrlNotype)),
-                feed.single(Field::FeedUrlLink)
-                    .or(feed.single(Field::FeedUrlAtom10Link)),
-            ),
-            Flavor::Youtube => (feed.single(Field::Url), feed.single(Field::FeedUrl)),
-            _ => (feed.single(Field::Url), None),
-        };
-        Feed {
-            format: if flavor.is_atom() {
-                Format::Atom
-            } else {
-                Format::Rss
-            },
-            title: owned(feed.single(Field::Title)),
-            description: owned(feed.single(Field::Description)),
-            site_url: owned(site_url),
-            self_url: owned(self_url),
-            hubs: feed.multi(Field::Hubs).flatten().cloned().collect(),
-            language: owned(feed.single(Field::Language)),
-            icon: owned(feed.single(Field::Icon)),
-            image_url: owned(image.and_then(|image| image.single(Field::Url))),
-            itunes_image: owned(feed.single(Field::ItunesImage)),
-            youtube_channel_id: owned(feed.single(Field::YoutubeChannelId)),
-            entries: feed
-                .entries
-                .iter()
-                .map(|&index| self.entry(&self.objects[index], flavor))
-                .collect(),
-        }
-    }
-
-    fn entry(&self, entry: &Object, flavor: Flavor) -> Entry {
-        let guid = entry
-            .objects
-            .get(&Field::EntryId)
-            .map(|&index| &self.objects[index]);
-        let (id, url) = if flavor.is_atom() {
-            let url = entry.single(Field::Url).or_else(|| {
-                entry
-                    .multi(Field::Links)
-                    .next()
-                    .and_then(|link| link.as_deref())
-            });
-            (entry.single(Field::EntryId), url)
-        } else {
-            let guid_text = guid.and_then(|guid| guid.guid.as_deref());
-            let perma_link = guid.is_some_and(|guid| guid.perma_link.as_deref() != Some("false"));
-            let url = entry
-                .single(Field::Url)
-                .or(guid_text.filter(|_| perma_link));
-            (guid_text, url)
-        };
-        let url = match flavor {
-            Flavor::RssFeedBurner | Flavor::AtomFeedBurner => entry.single(Field::OrigLink).or(url),
-            _ => url,
-        };
-        let title = match entry.singles.get(&Field::RawTitle) {
-            Some(Some(raw)) => Some(xhtml::text_content(raw)),
-            _ => owned(entry.single(Field::Title)),
-        };
-        let author = entry
-            .single(Field::Author)
-            .or(entry.single(Field::ItunesAuthor));
-        let enclosure = entry.single(Field::EnclosureUrl).map(|url| Enclosure {
-            url: url.to_string(),
-            mime_type: owned(entry.single(Field::EnclosureType)),
-            length: owned(entry.single(Field::EnclosureLength)),
-        });
-        let itunes = (flavor == Flavor::Itunes).then(|| Itunes {
-            duration: owned(entry.single(Field::ItunesDuration)),
-            episode: owned(entry.single(Field::ItunesEpisode)),
-            season: owned(entry.single(Field::ItunesSeason)),
-            episode_type: owned(entry.single(Field::ItunesEpisodeType)),
-            explicit: owned(entry.single(Field::ItunesExplicit)),
-            image: owned(entry.single(Field::ItunesImage)),
-            subtitle: owned(entry.single(Field::ItunesSubtitle)),
-            summary: owned(entry.single(Field::ItunesSummary)),
-            title: owned(entry.single(Field::ItunesTitle)),
-        });
-        Entry {
-            id: id.map(|id| id.trim().to_string()),
-            title: title.map(|title| title.trim().to_string()),
-            url: url.map(|url| url.trim().to_string()),
-            author: owned(author),
-            content: owned(entry.single(Field::Content)),
-            summary: owned(entry.single(Field::Summary)),
-            published: entry.published.or(entry.updated),
-            updated: entry.updated,
-            categories: entry
-                .multi(Field::Categories)
-                .map(|category| category.as_deref().unwrap_or_default().trim())
-                .filter(|category| !category.is_empty())
-                .map(String::from)
-                .collect(),
-            image: owned(entry.single(Field::Image)),
-            enclosure,
-            enclosures: entry.enclosures.clone(),
-            media: entry.media.clone(),
-            itunes,
-            youtube: (flavor == Flavor::Youtube).then(|| Youtube {
-                video_id: owned(entry.single(Field::YoutubeVideoId)),
-                channel_id: owned(entry.single(Field::YoutubeChannelId)),
-            }),
-        }
-    }
-}
-
-fn owned(value: Option<&str>) -> Option<String> {
-    value.map(String::from)
 }
