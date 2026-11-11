@@ -1161,11 +1161,14 @@ dependencies = [
  "encoding_rs",
  "quick-xml",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha1",
  "sha2",
  "thiserror",
+ "tokio",
+ "url",
 ]
 
 [[package]]

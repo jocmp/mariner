@@ -3,6 +3,7 @@
 
 mod date;
 mod decode;
+pub mod finder;
 mod json_feed;
 mod media;
 mod model;
@@ -33,11 +34,21 @@ pub fn parse(bytes: &[u8]) -> Result<Feed, Error> {
 pub fn parse_with_charset(bytes: &[u8], charset: Option<&str>) -> Result<Feed, Error> {
     let decoded = decode::decode(bytes, charset);
     let text = decoded.text.trim_start();
-    if let Some(flavor) = rules::detect(text) {
-        return Ok(sax::parse(text, flavor, decoded.declared_encoding));
+    let feed = if let Some(flavor) = rules::detect(text) {
+        sax::parse(text, flavor, decoded.declared_encoding)
+    } else if json_feed::is_json_feed(text) {
+        json_feed::parse(text)?
+    } else {
+        return Err(Error::NotAFeed);
+    };
+    // A page that only mentions `<rss` isn't a feed.
+    let has_content = feed.title.is_some()
+        || feed.site_url.is_some()
+        || feed.self_url.is_some()
+        || !feed.entries.is_empty();
+    if has_content {
+        Ok(feed)
+    } else {
+        Err(Error::NotAFeed)
     }
-    if json_feed::is_json_feed(text) {
-        return json_feed::parse(text);
-    }
-    Err(Error::NotAFeed)
 }

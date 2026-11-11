@@ -7,19 +7,31 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["fetch"]
+# Fetch over HTTP with `finder::HttpFetcher`. Without it, supply a `Fetch`.
+fetch = ["dep:reqwest"]
+
 [dependencies]
 chrono.workspace = true
 dom_query.workspace = true
 encoding_rs.workspace = true
 quick-xml.workspace = true
 regex.workspace = true
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 thiserror.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 sha2.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "find"
+required-features = ["fetch"]
