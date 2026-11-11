@@ -20,3 +20,11 @@ ON CONFLICT (article_id) DO UPDATE SET starred = 1, updated_at = ?2;
 INSERT INTO article_statuses (article_id, starred, last_unstarred_at, updated_at)
 SELECT id, 0, ?2, ?2 FROM articles WHERE id = ?1
 ON CONFLICT (article_id) DO UPDATE SET starred = 0, last_unstarred_at = ?2, updated_at = ?2;
+
+-- name: delete_old_tombstones
+-- Statuses whose article is gone, unstarred and unchanged since ?1. By then
+-- the article has left its feed, so it won't be added back.
+DELETE FROM article_statuses
+WHERE starred = 0
+  AND updated_at < ?1
+  AND article_id NOT IN (SELECT id FROM articles);

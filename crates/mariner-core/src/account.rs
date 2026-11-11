@@ -12,7 +12,7 @@ use mariner_feeds::finder::FoundFeed;
 
 use crate::database::Database;
 use crate::model::{AddFeedResult, Feed};
-use crate::{Result, queries};
+use crate::{Result, queries, time};
 
 mod articles;
 mod existing_feed;
@@ -53,14 +53,14 @@ impl<F: Fetch + Send + Sync> Account<F> {
         queries::feeds(&self.database).await
     }
 
-    /// Fetches new articles, then prunes read, unstarred articles stored
-    /// before `cutoff`.
+    /// Fetches new and changed articles, and deletes ones that left their
+    /// feed: after 30 days, or sooner when read and stored before `cutoff`.
+    /// Then forgets deleted articles' statuses once they're old enough not
+    /// to be needed.
     pub async fn refresh(&self, cutoff: Option<DateTime<Utc>>) -> Result<()> {
         self.delegate.refresh(self, cutoff).await?;
-        if let Some(cutoff) = cutoff {
-            articles::prune(&self.database, cutoff.timestamp()).await?;
-        }
-        Ok(())
+        let before = time::now() - articles::TOMBSTONE_LIFETIME;
+        articles::delete_old_tombstones(&self.database, before).await
     }
 
     pub async fn mark_read(&self, article_ids: &[String]) -> Result<()> {

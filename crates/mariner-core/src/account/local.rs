@@ -46,11 +46,12 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
         }
     }
 
-    /// Fetches every feed that isn't backing off. Local articles start
-    /// unread, so none would be pruned right away: `cutoff` isn't needed.
-    async fn refresh(&self, account: &Account<F>, _cutoff: Option<DateTime<Utc>>) -> Result<()> {
+    /// Fetches every feed that isn't backing off. Read articles that left
+    /// their feed are deleted when stored before `cutoff`.
+    async fn refresh(&self, account: &Account<F>, cutoff: Option<DateTime<Utc>>) -> Result<()> {
+        let cutoff = cutoff.map(|cutoff| cutoff.timestamp());
         LocalAccountRefresher::new(&self.fetcher)
-            .refresh(account)
+            .refresh(account, cutoff)
             .await
     }
 

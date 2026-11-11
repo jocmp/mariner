@@ -43,7 +43,7 @@ pub(super) async fn subscribe(
                 params![id, title, url, site_url, feed.itunes_image],
             )?;
             replace_taggings(&transaction, &id, &tag_names)?;
-            articles::insert(&transaction, &id, &url, &feed.entries, time::now())?;
+            articles::store(&transaction, &id, &url, &feed.entries, time::now(), None)?;
             let stored = queries::feed(&transaction, &id)?;
             transaction.commit()?;
             Ok(stored.expect("just inserted"))

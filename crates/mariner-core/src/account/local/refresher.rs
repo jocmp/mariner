@@ -30,7 +30,10 @@ impl<'a, F: Fetch + Send + Sync> LocalAccountRefresher<'a, F> {
         LocalAccountRefresher { fetcher }
     }
 
-    pub async fn refresh(&self, account: &Account<F>) -> Result<()> {
+    /// Fetches each due feed and stores its new state and entries. Articles
+    /// that left a feed and are read are deleted when stored before
+    /// `cutoff`.
+    pub async fn refresh(&self, account: &Account<F>, cutoff: Option<i64>) -> Result<()> {
         let now = time::now();
         let feeds = account
             .database()
@@ -39,7 +42,7 @@ impl<'a, F: Fetch + Send + Sync> LocalAccountRefresher<'a, F> {
         stream::iter(feeds)
             .map(|feed| async move {
                 let downloaded = self.download(feed, now).await;
-                store(account, downloaded).await
+                store(account, downloaded, cutoff).await
             })
             .buffer_unordered(CONCURRENCY)
             .try_collect::<()>()
@@ -124,8 +127,8 @@ fn fingerprint(body: &[u8]) -> String {
         .collect()
 }
 
-/// Stores a feed's fetch state and new articles in one transaction.
-async fn store<F>(account: &Account<F>, downloaded: Downloaded) -> Result<()> {
+/// Stores a feed's fetch state and entries in one transaction.
+async fn store<F>(account: &Account<F>, downloaded: Downloaded, cutoff: Option<i64>) -> Result<()> {
     account
         .database()
         .write(move |connection| {
@@ -133,12 +136,13 @@ async fn store<F>(account: &Account<F>, downloaded: Downloaded) -> Result<()> {
             let transaction = connection.transaction()?;
             update_crawl_data(&transaction, &feed.id, &feed.crawl)?;
             if let Some(parsed) = parsed {
-                articles::insert(
+                articles::store(
                     &transaction,
                     &feed.id,
                     &feed.feed_url,
                     &parsed.entries,
                     time::now(),
+                    cutoff,
                 )?;
             }
             transaction.commit()

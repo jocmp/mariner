@@ -162,31 +162,116 @@ fn trusts_a_permanent_redirect_after_five_sightings() {
 }
 
 #[test]
-fn prunes_old_read_articles_and_keeps_them_out() {
+fn updates_changed_articles_and_keeps_their_status() {
     block_on(async {
-        let network = Network::default().with(FEED_URL, &rss(&["read", "starred", "unread"]));
+        let network = Network::default().with(FEED_URL, &rss(&["1"]));
+        let (_dir, account) = local_account(&network).await;
+        account.add_feed(FEED_URL, None, None).await.unwrap();
+        let id = article_ids(&account).await["1"].clone();
+        account.mark_read(std::slice::from_ref(&id)).await.unwrap();
+
+        let edited = rss(&["1"]).replace("<title>1</title>", "<title>1, edited</title>");
+        network.respond(FEED_URL, 200, &[], &edited);
+        account.refresh(None).await.unwrap();
+        assert_eq!(titles(&account).await, ["1, edited"]);
+        assert_eq!(read_ids(&account).await, [id]);
+    });
+}
+
+#[test]
+fn deletes_articles_that_left_the_feed_after_30_days() {
+    block_on(async {
+        let network =
+            Network::default().with(FEED_URL, &rss(&["old", "recent", "starred", "listed"]));
+        let (_dir, account) = local_account(&network).await;
+        account.add_feed(FEED_URL, None, None).await.unwrap();
+        let ids = article_ids(&account).await;
+        account.add_star(&[ids["starred"].clone()]).await.unwrap();
+        arrived_days_ago(&account, &["old", "starred", "listed"], 31).await;
+
+        network.respond(FEED_URL, 200, &[], &rss(&["listed", "new"]));
+        account.refresh(None).await.unwrap();
+        assert_eq!(
+            titles(&account).await,
+            ["listed", "new", "recent", "starred"]
+        );
+    });
+}
+
+#[test]
+fn an_empty_feed_deletes_nothing() {
+    block_on(async {
+        let network = Network::default().with(FEED_URL, &rss(&["1"]));
+        let (_dir, account) = local_account(&network).await;
+        account.add_feed(FEED_URL, None, None).await.unwrap();
+        arrived_days_ago(&account, &["1"], 31).await;
+
+        network.respond(FEED_URL, 200, &[], &rss(&[]));
+        account.refresh(None).await.unwrap();
+        assert_eq!(titles(&account).await, ["1"]);
+    });
+}
+
+#[test]
+fn the_cutoff_deletes_read_articles_once_they_leave_the_feed() {
+    block_on(async {
+        let network = Network::default().with(FEED_URL, &rss(&["read", "unread", "listed"]));
         let (_dir, account) = local_account(&network).await;
         account.add_feed(FEED_URL, None, None).await.unwrap();
         let ids = article_ids(&account).await;
         account
-            .mark_read(&[ids["read"].clone(), ids["starred"].clone()])
+            .mark_read(&[ids["read"].clone(), ids["listed"].clone()])
             .await
             .unwrap();
-        account.add_star(&[ids["starred"].clone()]).await.unwrap();
 
+        network.respond(FEED_URL, 200, &[], &rss(&["listed"]));
         let tomorrow = chrono::Utc::now() + chrono::Duration::days(1);
         account.refresh(Some(tomorrow)).await.unwrap();
-        assert_eq!(titles(&account).await, ["starred", "unread"]);
+        assert_eq!(titles(&account).await, ["listed", "unread"]);
+    });
+}
 
-        // The feed still lists the pruned article; its status keeps it out.
-        network.respond(
-            FEED_URL,
-            200,
-            &[],
-            &rss(&["read", "starred", "unread", "new"]),
-        );
+#[test]
+fn tombstones_keep_deleted_articles_out_until_they_expire() {
+    block_on(async {
+        let network = Network::default().with(FEED_URL, &rss(&["1", "2"]));
+        let (_dir, account) = local_account(&network).await;
+        account.add_feed(FEED_URL, None, None).await.unwrap();
+        arrived_days_ago(&account, &["1", "2"], 31).await;
+        network.respond(FEED_URL, 200, &[], &rss(&["3"]));
         account.refresh(None).await.unwrap();
-        assert_eq!(titles(&account).await, ["new", "starred", "unread"]);
+        assert_eq!(titles(&account).await, ["3"]);
+        assert_eq!(
+            status_count(&account).await,
+            3,
+            "deleted articles leave tombstones"
+        );
+
+        // Tombstones keep the deleted articles out if the feed lists them again.
+        network.respond(FEED_URL, 200, &[], &rss(&["1", "3"]));
+        account.refresh(None).await.unwrap();
+        assert_eq!(titles(&account).await, ["3"]);
+
+        // A month on, unchanged tombstones are forgotten.
+        status_changed_days_ago(&account, 31).await;
+        network.respond(FEED_URL, 200, &[], &rss(&["3", "4"]));
+        account.refresh(None).await.unwrap();
+        assert_eq!(status_count(&account).await, 2, "the statuses of 3 and 4");
+    });
+}
+
+#[test]
+fn stale_items_start_read() {
+    block_on(async {
+        let feed = r#"<rss version="2.0"><channel><title>Example</title>
+            <item><title>stale</title><guid>stale</guid><pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>
+            <item><title>fresh</title><guid>fresh</guid></item>
+            </channel></rss>"#;
+        let network = Network::default().with(FEED_URL, feed);
+        let (_dir, account) = local_account(&network).await;
+        account.add_feed(FEED_URL, None, None).await.unwrap();
+        let ids = article_ids(&account).await;
+        assert_eq!(read_ids(&account).await, [ids["stale"].clone()]);
     });
 }
 
@@ -269,6 +354,63 @@ async fn delete_articles(account: &Account<Network>) {
         .database()
         .write(|connection| {
             connection.execute_batch("DELETE FROM article_statuses; DELETE FROM articles;")
+        })
+        .await
+        .unwrap();
+}
+
+async fn read_ids(account: &Account<Network>) -> Vec<String> {
+    account
+        .database()
+        .read(|connection| {
+            connection
+                .prepare("SELECT article_id FROM article_statuses WHERE read = 1")?
+                .query_map([], |row| row.get(0))?
+                .collect()
+        })
+        .await
+        .unwrap()
+}
+
+async fn status_count(account: &Account<Network>) -> i64 {
+    account
+        .database()
+        .read(|connection| {
+            connection.query_row("SELECT count(*) FROM article_statuses", [], |row| {
+                row.get(0)
+            })
+        })
+        .await
+        .unwrap()
+}
+
+/// Moves the arrival of the articles with these titles back in time.
+async fn arrived_days_ago(account: &Account<Network>, titles: &[&str], days: i64) {
+    let titles: Vec<String> = titles.iter().map(|title| title.to_string()).collect();
+    account
+        .database()
+        .write(move |connection| {
+            for title in &titles {
+                connection.execute(
+                    "UPDATE articles SET created_at = created_at - ?2 * 86400 WHERE title = ?1",
+                    rusqlite::params![title, days],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+/// Moves every status's last change back in time.
+async fn status_changed_days_ago(account: &Account<Network>, days: i64) {
+    account
+        .database()
+        .write(move |connection| {
+            connection.execute(
+                "UPDATE article_statuses SET updated_at = updated_at - ?1 * 86400",
+                [days],
+            )
         })
         .await
         .unwrap();

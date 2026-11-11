@@ -1221,6 +1221,7 @@ dependencies = [
  "mercury-parser",
  "refinery",
  "rusqlite",
+ "serde_json",
  "sha1",
  "tempfile",
  "thiserror",
