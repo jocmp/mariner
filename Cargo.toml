@@ -40,3 +40,8 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Bundled SQLite optimized for size: about 0.6 MB smaller per platform,
+# with little effect on its speed.
+[profile.release.package.libsqlite3-sys]
+opt-level = "s"

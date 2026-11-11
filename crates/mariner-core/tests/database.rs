@@ -170,6 +170,22 @@ fn enforces_foreign_keys() {
 }
 
 #[test]
+fn rejects_values_of_the_wrong_type() {
+    block_on(async {
+        let (_dir, database) = account().await;
+        let result = database
+            .write(|connection| {
+                connection.execute(
+                    "INSERT INTO tags (name, expanded) VALUES ('news', 'yes')",
+                    [],
+                )
+            })
+            .await;
+        assert!(matches!(result, Err(Error::Sqlite(_))));
+    });
+}
+
+#[test]
 fn reopening_keeps_data_and_migrates_once() {
     block_on(async {
         let dir = tempfile::tempdir().unwrap();

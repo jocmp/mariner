@@ -1,5 +1,5 @@
 -- One database per account. Timestamps are Unix seconds; booleans are
--- INTEGER 0/1. article_statuses, article_sync_statuses and
+-- INTEGER 0/1. Tables are STRICT, so a value of the wrong type is an error. article_statuses, article_sync_statuses and
 -- excluded_statuses have no foreign keys: their rows outlive local deletes.
 
 CREATE TABLE feeds (
@@ -27,7 +27,7 @@ CREATE TABLE feeds (
   retry_after INTEGER,
   redirected_to TEXT,
   redirect_count INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE articles (
   id TEXT NOT NULL PRIMARY KEY,
@@ -42,7 +42,7 @@ CREATE TABLE articles (
   enclosure_type TEXT,
   published_at INTEGER NOT NULL,
   created_at INTEGER NOT NULL
-);
+) STRICT;
 
 CREATE TABLE article_statuses (
   article_id TEXT NOT NULL PRIMARY KEY,
@@ -51,18 +51,18 @@ CREATE TABLE article_statuses (
   last_read_at INTEGER,
   last_unstarred_at INTEGER,
   updated_at INTEGER NOT NULL
-);
+) STRICT;
 
 CREATE TABLE taggings (
   id TEXT NOT NULL PRIMARY KEY,
   feed_id TEXT NOT NULL REFERENCES feeds (id) ON DELETE CASCADE,
   name TEXT NOT NULL
-);
+) STRICT;
 
 CREATE TABLE tags (
   name TEXT NOT NULL PRIMARY KEY,
   expanded INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE enclosures (
   article_id TEXT NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
@@ -71,31 +71,31 @@ CREATE TABLE enclosures (
   itunes_duration_seconds INTEGER,
   itunes_image TEXT,
   PRIMARY KEY (article_id, url)
-);
+) STRICT;
 
 CREATE TABLE saved_searches (
   id TEXT NOT NULL PRIMARY KEY,
   name TEXT NOT NULL,
   query_text TEXT,
   show_unread_badge INTEGER NOT NULL DEFAULT 1
-);
+) STRICT;
 
 CREATE TABLE saved_search_articles (
   saved_search_id TEXT NOT NULL REFERENCES saved_searches (id) ON DELETE CASCADE,
   article_id TEXT NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
   PRIMARY KEY (saved_search_id, article_id)
-);
+) STRICT;
 
 CREATE TABLE article_notifications (
   article_id TEXT NOT NULL PRIMARY KEY REFERENCES articles (id) ON DELETE CASCADE,
   dismissed_at INTEGER
-);
+) STRICT;
 
 CREATE TABLE excluded_statuses (
   article_id TEXT NOT NULL,
-  type TEXT,
+  type TEXT NOT NULL,
   PRIMARY KEY (article_id, type)
-);
+) STRICT;
 
 CREATE TABLE article_sync_statuses (
   article_id TEXT NOT NULL,
@@ -103,12 +103,12 @@ CREATE TABLE article_sync_statuses (
   flag INTEGER NOT NULL DEFAULT 0,
   selected INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (article_id, key)
-);
+) STRICT;
 
 CREATE TABLE account_preferences (
   key TEXT NOT NULL PRIMARY KEY,
   value TEXT
-);
+) STRICT;
 
 CREATE INDEX articles_feed_id_index ON articles (feed_id);
 CREATE INDEX articles_published_at_index ON articles (published_at);
