@@ -8,6 +8,7 @@ use url::Url;
 use super::articles;
 use crate::database::Database;
 use crate::model::Feed;
+use crate::sql::account::{feeds, tags};
 use crate::{Result, queries, time};
 
 /// Title of a feed that has none.
@@ -38,8 +39,7 @@ pub(super) async fn subscribe(
             let site_url = feed.site_url.clone().or_else(|| url_from_host(&url));
             let transaction = connection.transaction()?;
             transaction.execute(
-                "INSERT INTO feeds (id, subscription_id, title, feed_url, site_url, itunes_image_url)
-                 VALUES (?1, ?1, ?2, ?3, ?4, ?5)",
+                feeds::INSERT_FEED,
                 params![id, title, url, site_url, feed.itunes_image],
             )?;
             replace_taggings(&transaction, &id, &tag_names)?;
@@ -63,10 +63,7 @@ pub(super) async fn update(
     let feed = database
         .write(move |connection| {
             let transaction = connection.transaction()?;
-            transaction.execute(
-                "UPDATE feeds SET title = ?2 WHERE id = ?1",
-                params![id, title],
-            )?;
+            transaction.execute(feeds::UPDATE_FEED_TITLE, params![id, title])?;
             replace_taggings(&transaction, &id, &tag_names)?;
             let stored = queries::feed(&transaction, &id)?;
             transaction.commit()?;
@@ -83,18 +80,10 @@ pub(super) async fn rename_tag(database: &Database, old_name: &str, new_name: &s
     database
         .write(move |connection| {
             let transaction = connection.transaction()?;
-            transaction.execute(
-                "UPDATE OR IGNORE taggings SET name = ?2, id = feed_id || ':' || ?2
-                 WHERE name = ?1",
-                [&old_name, &new_name],
-            )?;
-            transaction.execute("DELETE FROM taggings WHERE name = ?1", [&old_name])?;
-            transaction.execute(
-                "INSERT OR IGNORE INTO tags (name, expanded)
-                 SELECT ?2, expanded FROM tags WHERE name = ?1",
-                [&old_name, &new_name],
-            )?;
-            transaction.execute("DELETE FROM tags WHERE name = ?1", [&old_name])?;
+            transaction.execute(tags::RENAME_TAGGINGS, [&old_name, &new_name])?;
+            transaction.execute(tags::DELETE_TAGGINGS_NAMED, [&old_name])?;
+            transaction.execute(tags::COPY_TAG, [&old_name, &new_name])?;
+            transaction.execute(tags::DELETE_TAG, [&old_name])?;
             transaction.commit()
         })
         .await?;
@@ -109,12 +98,8 @@ pub(super) async fn remove(database: &Database, id: &str) -> Result<()> {
     database
         .write(move |connection| {
             let transaction = connection.transaction()?;
-            transaction.execute(
-                "DELETE FROM article_statuses
-                 WHERE article_id IN (SELECT id FROM articles WHERE feed_id = ?1)",
-                [&id],
-            )?;
-            transaction.execute("DELETE FROM feeds WHERE id = ?1", [&id])?;
+            transaction.execute(feeds::DELETE_FEED_STATUSES, [&id])?;
+            transaction.execute(feeds::DELETE_FEED, [&id])?;
             transaction.commit()
         })
         .await?;
@@ -126,8 +111,8 @@ pub(super) async fn remove_tag(database: &Database, name: &str) -> Result<()> {
     database
         .write(move |connection| {
             let transaction = connection.transaction()?;
-            transaction.execute("DELETE FROM taggings WHERE name = ?1", [&name])?;
-            transaction.execute("DELETE FROM tags WHERE name = ?1", [&name])?;
+            transaction.execute(tags::DELETE_TAGGINGS_NAMED, [&name])?;
+            transaction.execute(tags::DELETE_TAG, [&name])?;
             transaction.commit()
         })
         .await?;
@@ -154,11 +139,9 @@ fn replace_taggings(
     feed_id: &str,
     tag_names: &[String],
 ) -> rusqlite::Result<()> {
-    transaction.execute("DELETE FROM taggings WHERE feed_id = ?1", [feed_id])?;
-    let mut tagging = transaction.prepare_cached(
-        "INSERT OR IGNORE INTO taggings (id, feed_id, name) VALUES (?1 || ':' || ?2, ?1, ?2)",
-    )?;
-    let mut tag = transaction.prepare_cached("INSERT OR IGNORE INTO tags (name) VALUES (?1)")?;
+    transaction.execute(tags::DELETE_FEED_TAGGINGS, [feed_id])?;
+    let mut tagging = transaction.prepare_cached(tags::INSERT_TAGGING)?;
+    let mut tag = transaction.prepare_cached(tags::INSERT_TAG)?;
     for name in tag_names
         .iter()
         .map(|name| name.trim())
