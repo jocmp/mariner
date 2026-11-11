@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 chrono.workspace = true
 clap.workspace = true
+image.workspace = true
 mariner-condense = { path = "../mariner-condense" }
 mariner-core = { path = "../mariner-core" }
 mariner-feeds = { path = "../mariner-feeds" }

@@ -9,6 +9,8 @@ use mariner_core::{Account, AddFeedResult, Database, Kind};
 use mariner_feeds::fetch::HttpFetcher;
 
 mod app;
+mod halfblock;
+mod images;
 mod paths;
 mod reader;
 mod ui;

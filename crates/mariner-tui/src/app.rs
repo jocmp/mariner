@@ -6,12 +6,13 @@ use std::time::Duration;
 
 use mariner_core::{Article, ArticleFilter, Feed};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::text::Line;
 use ratatui::widgets::ListState;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-use crate::{LocalAccount, reader, ui};
+use crate::images::Images;
+use crate::reader::{self, Part};
+use crate::{LocalAccount, halfblock, ui};
 
 /// Articles loaded into the list at once.
 const PAGE: usize = 500;
@@ -21,7 +22,8 @@ pub fn run(
     runtime: &Runtime,
     account: Arc<LocalAccount>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::new(runtime, account);
+    let images = Images::new(mariner_feeds::fetch::HttpFetcher::new()?);
+    let mut app = App::new(runtime, account, images);
     app.reload();
     let mut terminal = ratatui::init();
     let result = (|| -> std::io::Result<()> {
@@ -60,6 +62,9 @@ pub struct App<'a> {
     pub articles: Vec<Article>,
     pub article_list: ListState,
     pub reader: Option<Reader>,
+    pub images: Images,
+    /// Whether to draw images in 24-bit color, or the 256 standard colors.
+    pub true_color: bool,
     pub focus: Pane,
     pub status: String,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
@@ -69,12 +74,12 @@ pub struct App<'a> {
 /// The open article.
 pub struct Reader {
     pub article: Article,
-    pub lines: Vec<Line<'static>>,
+    pub parts: Vec<Part>,
     pub scroll: u16,
 }
 
 impl<'a> App<'a> {
-    fn new(runtime: &'a Runtime, account: Arc<LocalAccount>) -> Self {
+    fn new(runtime: &'a Runtime, account: Arc<LocalAccount>, images: Images) -> Self {
         App {
             runtime,
             account,
@@ -85,6 +90,8 @@ impl<'a> App<'a> {
             articles: Vec::new(),
             article_list: ListState::default(),
             reader: None,
+            images,
+            true_color: halfblock::true_color_terminal(),
             focus: Pane::Feeds,
             status: String::new(),
             refreshing: None,
@@ -257,10 +264,12 @@ impl<'a> App<'a> {
         };
         match self.runtime.block_on(self.account.article(&article.id)) {
             Ok(Some(content)) => {
-                let lines = reader::lines(&content, self.feed_title(&article.feed_id));
+                let parts = reader::parts(&content, self.feed_title(&article.feed_id));
+                self.images
+                    .request(self.runtime, reader::image_urls(&parts));
                 self.reader = Some(Reader {
                     article: content.article,
-                    lines,
+                    parts,
                     scroll: 0,
                 });
                 self.focus = Pane::Reader;
@@ -455,7 +464,8 @@ mod tests {
     fn shows_three_panes_when_wide_and_one_when_narrow() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
-        let mut app = App::new(&runtime, account(&runtime, dir.path()));
+        let images = Images::new(HttpFetcher::new().unwrap());
+        let mut app = App::new(&runtime, account(&runtime, dir.path()), images);
         app.reload();
 
         let wide = render(&mut app, 140);
@@ -475,7 +485,8 @@ mod tests {
     fn walks_from_feeds_to_the_reader_and_back() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
-        let mut app = App::new(&runtime, account(&runtime, dir.path()));
+        let images = Images::new(HttpFetcher::new().unwrap());
+        let mut app = App::new(&runtime, account(&runtime, dir.path()), images);
         app.reload();
 
         press(&mut app, KeyCode::Enter);

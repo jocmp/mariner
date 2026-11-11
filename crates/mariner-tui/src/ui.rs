@@ -9,6 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, Pane};
+use crate::reader;
 
 /// Narrower terminals show one pane at a time.
 const SIDE_BY_SIDE_WIDTH: u16 = 120;
@@ -99,7 +100,9 @@ fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = pane("Article", app.focus == Pane::Reader);
     match &app.reader {
         Some(reader) => {
-            let paragraph = Paragraph::new(reader.lines.clone())
+            let width = area.width.saturating_sub(2);
+            let lines = reader::render(&reader.parts, width, &app.images, app.true_color);
+            let paragraph = Paragraph::new(lines)
                 .block(block)
                 .wrap(Wrap { trim: false })
                 .scroll((reader.scroll, 0));
