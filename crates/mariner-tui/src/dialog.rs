@@ -1,5 +1,5 @@
-//! The add-feed dialog: a URL box, then a list to pick from when the URL
-//! leads to several feeds.
+//! Dialogs over the panes: adding a feed (a URL box, then a list to pick
+//! from when the URL leads to several feeds), and the open article's links.
 
 use mariner_core::FeedChoice;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -18,13 +18,19 @@ pub enum Dialog {
         choices: Vec<FeedChoice>,
         list: ListState,
     },
+    /// The open article's links, as (text, URL).
+    Links {
+        links: Vec<(String, String)>,
+        list: ListState,
+    },
 }
 
-/// What a key in the dialog asks the app to do.
+/// What a key in a dialog asks the app to do.
 pub enum Action {
     None,
     Close,
     Add(String),
+    Open(String),
 }
 
 impl Dialog {
@@ -38,6 +44,13 @@ impl Dialog {
     pub fn choose(choices: Vec<FeedChoice>) -> Self {
         Dialog::Choose {
             choices,
+            list: ListState::default().with_selected(Some(0)),
+        }
+    }
+
+    pub fn links(links: Vec<(String, String)>) -> Self {
+        Dialog::Links {
+            links,
             list: ListState::default().with_selected(Some(0)),
         }
     }
@@ -61,25 +74,32 @@ impl Dialog {
                 _ => Action::None,
             },
             Dialog::Adding { .. } => Action::None,
-            Dialog::Choose { choices, list } => match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
-                    let next = list
-                        .selected()
-                        .map_or(0, |row| (row + 1).min(choices.len() - 1));
-                    list.select(Some(next));
-                    Action::None
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    let previous = list.selected().map_or(0, |row| row.saturating_sub(1));
-                    list.select(Some(previous));
-                    Action::None
-                }
-                KeyCode::Enter => list
-                    .selected()
-                    .and_then(|row| choices.get(row))
-                    .map_or(Action::None, |choice| Action::Add(choice.url.clone())),
-                _ => Action::None,
+            Dialog::Choose { choices, list } => match pick(key, list, choices.len()) {
+                Some(row) => Action::Add(choices[row].url.clone()),
+                None => Action::None,
+            },
+            Dialog::Links { links, list } => match pick(key, list, links.len()) {
+                Some(row) => Action::Open(links[row].1.clone()),
+                None => Action::None,
             },
         }
+    }
+}
+
+/// Moves through a list with j/k or the arrows; Enter picks the selected
+/// row.
+fn pick(key: KeyEvent, list: &mut ListState, rows: usize) -> Option<usize> {
+    let last = rows.saturating_sub(1);
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            list.select(Some(list.selected().map_or(0, |row| (row + 1).min(last))));
+            None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            list.select(Some(list.selected().map_or(0, |row| row.saturating_sub(1))));
+            None
+        }
+        KeyCode::Enter => list.selected().filter(|row| *row < rows),
+        _ => None,
     }
 }

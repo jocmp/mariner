@@ -5,14 +5,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mariner_core::{AddFeedResult, Article, ArticleFilter, Feed};
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::crossterm::execute;
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
 use crate::dialog::{Action, Dialog};
 use crate::images::Images;
-use crate::reader::{self, Part};
+use crate::reader::{self, LinkRange, Part};
 use crate::{LocalAccount, halfblock, ui};
 
 /// Articles loaded into the list at once.
@@ -28,18 +33,21 @@ pub fn run(
     app.reload();
     let mut terminal = ratatui::init();
     let result = (|| -> std::io::Result<()> {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
         while !app.quit {
             terminal.draw(|frame| ui::draw(frame, &mut app))?;
-            if event::poll(Duration::from_millis(200))?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                app.on_key(key);
+            if event::poll(Duration::from_millis(200))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key),
+                    Event::Mouse(mouse) => app.on_mouse(mouse),
+                    _ => {}
+                }
             }
             app.tick();
         }
         Ok(())
     })();
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     Ok(result?)
 }
@@ -67,12 +75,24 @@ pub struct App<'a> {
     /// Whether to draw images in 24-bit color, or the 256 standard colors.
     pub true_color: bool,
     pub focus: Pane,
+    /// Where each pane was last drawn, for mouse clicks; `None` when hidden.
+    pub areas: Areas,
     pub status: String,
     /// A dialog over the panes, which takes every key while it's open.
     pub dialog: Option<Dialog>,
+    /// Opens a URL in the browser; swappable so tests don't.
+    opener: Box<dyn Fn(&str) -> std::io::Result<()>>,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
     adding: Option<JoinHandle<mariner_core::Result<AddFeedResult>>>,
     quit: bool,
+}
+
+/// Where the panes were last drawn, borders included.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Areas {
+    pub feeds: Option<Rect>,
+    pub articles: Option<Rect>,
+    pub reader: Option<Rect>,
 }
 
 /// The open article.
@@ -80,6 +100,10 @@ pub struct Reader {
     pub article: Article,
     pub parts: Vec<Part>,
     pub scroll: u16,
+    /// The furthest the article scrolls at the last drawn size.
+    pub max_scroll: u16,
+    /// The links on each line as last laid out.
+    pub links: Vec<Vec<LinkRange>>,
 }
 
 impl<'a> App<'a> {
@@ -97,8 +121,10 @@ impl<'a> App<'a> {
             images,
             true_color: halfblock::true_color_terminal(),
             focus: Pane::Feeds,
+            areas: Areas::default(),
             status: String::new(),
             dialog: None,
+            opener: Box::new(open_in_system_browser),
             refreshing: None,
             adding: None,
             quit: false,
@@ -132,6 +158,10 @@ impl<'a> App<'a> {
                 Action::None => {}
                 Action::Close => self.dialog = None,
                 Action::Add(url) => self.add_feed(url),
+                Action::Open(url) => {
+                    self.dialog = None;
+                    self.open_url(&url);
+                }
             }
             return;
         }
@@ -151,6 +181,7 @@ impl<'a> App<'a> {
             KeyCode::Char('s') => self.toggle_star(),
             KeyCode::Char('A') => self.mark_all_read(),
             KeyCode::Char('o') => self.open_in_browser(),
+            KeyCode::Char('L') => self.show_links(),
             _ => {}
         }
     }
@@ -286,7 +317,10 @@ impl<'a> App<'a> {
             }
             Pane::Reader => {
                 if let Some(reader) = &mut self.reader {
-                    reader.scroll = reader.scroll.saturating_add_signed(delta as i16);
+                    reader.scroll = reader
+                        .scroll
+                        .saturating_add_signed(delta as i16)
+                        .min(reader.max_scroll);
                 }
             }
         }
@@ -339,6 +373,8 @@ impl<'a> App<'a> {
                     article: content.article,
                     parts,
                     scroll: 0,
+                    max_scroll: 0,
+                    links: Vec::new(),
                 });
                 self.focus = Pane::Reader;
                 if !article.read {
@@ -455,21 +491,128 @@ impl<'a> App<'a> {
     }
 
     fn open_in_browser(&mut self) {
-        let Some(url) = self
+        if let Some(url) = self
             .current_article()
             .and_then(|article| article.url.clone())
-        else {
-            return;
-        };
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        if let Err(error) = std::process::Command::new(opener).arg(&url).spawn() {
-            self.status = format!("Couldn't open {url}: {error}");
+        {
+            self.open_url(&url);
         }
     }
+
+    fn open_url(&mut self, url: &str) {
+        match (self.opener)(url) {
+            Ok(()) => self.status = format!("Opened {url}"),
+            Err(error) => self.status = format!("Couldn't open {url}: {error}"),
+        }
+    }
+
+    /// Lists the open article's links to pick one.
+    fn show_links(&mut self) {
+        let Some(reader) = &self.reader else { return };
+        let links = reader::links(&reader.parts);
+        if links.is_empty() {
+            self.status = "This article has no links".into();
+        } else {
+            self.dialog = Some(Dialog::links(links));
+        }
+    }
+
+    fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let (column, row) = (mouse.column, mouse.row);
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.click(column, row),
+            MouseEventKind::ScrollDown => self.scroll_at(column, row, 3),
+            MouseEventKind::ScrollUp => self.scroll_at(column, row, -3),
+            _ => {}
+        }
+    }
+
+    /// Selects the feed or article clicked, opening an article, or opens
+    /// the link clicked in the reader.
+    fn click(&mut self, column: u16, row: u16) {
+        let Some((pane, x, y)) = self.pane_at(column, row) else {
+            return;
+        };
+        self.focus = pane;
+        match pane {
+            Pane::Feeds => {
+                let index = self.feed_list.offset() + usize::from(y);
+                if index <= self.feeds.len() && Some(index) != self.feed_list.selected() {
+                    self.feed_list.select(Some(index));
+                    self.article_list.select(None);
+                    self.load_articles();
+                }
+            }
+            Pane::Articles => {
+                // Each article takes two lines.
+                let index = self.article_list.offset() + usize::from(y / 2);
+                if index < self.articles.len() {
+                    self.article_list.select(Some(index));
+                    self.open_article();
+                }
+            }
+            Pane::Reader => {
+                let Some(reader) = &self.reader else { return };
+                let line = usize::from(reader.scroll) + usize::from(y);
+                let url = reader.links.get(line).and_then(|links| {
+                    links
+                        .iter()
+                        .find(|link| link.start <= x && x < link.end)
+                        .map(|link| link.url.to_string())
+                });
+                if let Some(url) = url {
+                    self.open_url(&url);
+                }
+            }
+        }
+    }
+
+    /// Scrolls the pane under the pointer.
+    fn scroll_at(&mut self, column: u16, row: u16, delta: i32) {
+        if let Some((pane, _, _)) = self.pane_at(column, row) {
+            let focus = self.focus;
+            self.focus = pane;
+            self.move_by(delta);
+            if pane != Pane::Reader {
+                self.focus = focus;
+            }
+        }
+    }
+
+    /// The pane at a screen position, and the position inside its border.
+    fn pane_at(&self, column: u16, row: u16) -> Option<(Pane, u16, u16)> {
+        [
+            (Pane::Feeds, self.areas.feeds),
+            (Pane::Articles, self.areas.articles),
+            (Pane::Reader, self.areas.reader),
+        ]
+        .into_iter()
+        .find_map(|(pane, area)| {
+            let area = area?;
+            let inside = column > area.x
+                && column < area.x + area.width.saturating_sub(1)
+                && row > area.y
+                && row < area.y + area.height.saturating_sub(1);
+            inside.then(|| (pane, column - area.x - 1, row - area.y - 1))
+        })
+    }
+}
+
+/// Opens `url` with the system's opener (`open` on macOS, `xdg-open`
+/// elsewhere).
+fn open_in_system_browser(url: &str) -> std::io::Result<()> {
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(opener)
+        .arg(url)
+        .spawn()
+        .map(|_| ())
 }
 
 /// `row + delta`, kept within `0..rows`.
@@ -499,7 +642,7 @@ mod tests {
                            VALUES ('f', 'f', 'Example Feed', 'https://example.com/feed.xml');
                          INSERT INTO articles (id, feed_id, title, url, content_html, published_at, created_at)
                            VALUES ('a', 'f', 'First Post', 'https://example.com/1',
-                                   '<p>Hello <b>world</b>.</p><ul><li>One</li></ul>', 2000000000, 2000000000),
+                                   '<p>Hello <b>world</b>, see <a href=\"https://example.com/more\">more</a>.</p><ul><li>One</li></ul>', 2000000000, 2000000000),
                                   ('b', 'f', 'Second Post', 'https://example.com/2', '<p>Bye.</p>', 1900000000, 1900000000);
                          INSERT INTO article_statuses (article_id, updated_at) VALUES ('a', 1), ('b', 1);",
                     )
@@ -567,7 +710,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         let reader = render(&mut app, 80);
         assert!(
-            reader.contains("First Post") && reader.contains("Hello world."),
+            reader.contains("First Post") && reader.contains("Hello world, see more."),
             "{reader}"
         );
         assert!(reader.contains("• One"), "{reader}");
@@ -670,6 +813,133 @@ mod tests {
             "the new feed is selected"
         );
         assert_eq!(app.status, "Added Example Feed");
+    }
+
+    /// Makes `app` record the URLs it opens instead of opening them.
+    fn record_opens(app: &mut App) -> Arc<std::sync::Mutex<Vec<String>>> {
+        let opened = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&opened);
+        app.opener = Box::new(move |url| {
+            record.lock().unwrap().push(url.to_string());
+            Ok(())
+        });
+        opened
+    }
+
+    fn mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
+        app.on_mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        mouse(app, MouseEventKind::Down(MouseButton::Left), column, row);
+    }
+
+    #[test]
+    fn clicks_select_feeds_open_articles_and_follow_links() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        let opened = record_opens(&mut app);
+
+        render(&mut app, 140);
+        let feeds = app.areas.feeds.unwrap();
+        click(&mut app, feeds.x + 3, feeds.y + 2);
+        assert_eq!(
+            app.feed_list.selected(),
+            Some(1),
+            "the second row is the feed"
+        );
+
+        render(&mut app, 140);
+        let articles = app.areas.articles.unwrap();
+        click(&mut app, articles.x + 3, articles.y + 3);
+        assert_eq!(app.focus, Pane::Reader);
+        let title = app.reader.as_ref().unwrap().article.title.clone();
+        assert_eq!(
+            title.as_deref(),
+            Some("Second Post"),
+            "the second article takes rows 3-4"
+        );
+
+        app.article_list.select(Some(0));
+        app.open_article();
+        render(&mut app, 140);
+        let reader = app.reader.as_ref().unwrap();
+        let (line, link) = reader
+            .links
+            .iter()
+            .enumerate()
+            .find_map(|(line, links)| {
+                links
+                    .iter()
+                    .find(|link| &*link.url == "https://example.com/more")
+                    .map(|link| (line as u16, link.clone()))
+            })
+            .unwrap();
+        let area = app.areas.reader.unwrap();
+        click(&mut app, area.x + 1 + link.start, area.y + 1 + line);
+        click(
+            &mut app,
+            area.x + 1 + link.start.saturating_sub(2),
+            area.y + 1 + line,
+        );
+        assert_eq!(
+            *opened.lock().unwrap(),
+            ["https://example.com/more"],
+            "only the link opens"
+        );
+    }
+
+    #[test]
+    fn the_reader_stops_scrolling_at_the_end() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.open_article();
+        render(&mut app, 80);
+        for _ in 0..20 {
+            press(&mut app, KeyCode::Char('j'));
+        }
+        let area = app.areas.reader.unwrap();
+        mouse(&mut app, MouseEventKind::ScrollDown, area.x + 2, area.y + 2);
+        let reader = app.reader.as_ref().unwrap();
+        assert_eq!(reader.max_scroll, 0, "the short article fits");
+        assert_eq!(reader.scroll, 0);
+
+        // Three rows tall, the same article has to scroll, but only so far.
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(80, 6)).unwrap();
+        terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+        for _ in 0..50 {
+            press(&mut app, KeyCode::Char('j'));
+        }
+        let reader = app.reader.as_ref().unwrap();
+        assert!(reader.max_scroll > 0);
+        assert_eq!(reader.scroll, reader.max_scroll);
+    }
+
+    #[test]
+    fn lists_the_articles_links() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        let opened = record_opens(&mut app);
+        app.open_article();
+
+        press(&mut app, KeyCode::Char('L'));
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains(" Links ") && screen.contains("more  https://example.com/more"),
+            "{screen}"
+        );
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.dialog.is_none());
+        assert_eq!(*opened.lock().unwrap(), ["https://example.com/more"]);
     }
 
     fn tempfile_dir() -> tempfile::TempDir {

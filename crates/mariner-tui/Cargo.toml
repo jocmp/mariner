@@ -20,6 +20,7 @@ mariner-core = { path = "../mariner-core" }
 mariner-feeds = { path = "../mariner-feeds" }
 ratatui.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+unicode-width.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

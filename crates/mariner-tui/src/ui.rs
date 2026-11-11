@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
-use crate::app::{App, Pane};
+use crate::app::{App, Areas, Pane};
 use crate::dialog::Dialog;
 use crate::reader;
 
@@ -25,14 +25,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Constraint::Fill(1),
         ])
         .areas(main);
+        app.areas = Areas {
+            feeds: Some(feeds),
+            articles: Some(articles),
+            reader: Some(reader),
+        };
         draw_feeds(frame, app, feeds);
         draw_articles(frame, app, articles);
         draw_reader(frame, app, reader);
     } else {
+        app.areas = Areas::default();
         match app.focus {
-            Pane::Feeds => draw_feeds(frame, app, main),
-            Pane::Articles => draw_articles(frame, app, main),
-            Pane::Reader => draw_reader(frame, app, main),
+            Pane::Feeds => {
+                app.areas.feeds = Some(main);
+                draw_feeds(frame, app, main);
+            }
+            Pane::Articles => {
+                app.areas.articles = Some(main);
+                draw_articles(frame, app, main);
+            }
+            Pane::Reader => {
+                app.areas.reader = Some(main);
+                draw_reader(frame, app, main);
+            }
         }
     }
     draw_status(frame, app, status);
@@ -47,6 +62,9 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
     let width = screen.width.saturating_sub(4).min(72);
     let height = match dialog {
         Dialog::Choose { choices, .. } => (choices.len() as u16 + 4).min(screen.height),
+        Dialog::Links { links, .. } => {
+            (links.len() as u16 + 2).min(screen.height.saturating_sub(2))
+        }
         _ => 6.min(screen.height),
     };
     let area = Rect {
@@ -86,6 +104,21 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
                 .block(pane("Add feed", true))
                 .wrap(Wrap { trim: true });
             frame.render_widget(paragraph, area);
+        }
+        Dialog::Links { links, list } => {
+            let items: Vec<ListItem> = links
+                .iter()
+                .map(|(text, url)| {
+                    ListItem::new(Line::from(vec![
+                        Span::from(text.clone()),
+                        Span::from(format!("  {url}")).dim(),
+                    ]))
+                })
+                .collect();
+            let list_widget = List::new(items)
+                .block(pane("Links", true).title_bottom(" Enter to open · Esc to close "))
+                .highlight_style(highlight());
+            frame.render_stateful_widget(list_widget, area, list);
         }
         Dialog::Choose { choices, list } => {
             let items: Vec<ListItem> = choices
@@ -170,13 +203,15 @@ fn draw_articles(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = pane("Article", app.focus == Pane::Reader);
-    match &app.reader {
+    let inner = block.inner(area);
+    match &mut app.reader {
         Some(reader) => {
-            let width = area.width.saturating_sub(2);
-            let lines = reader::render(&reader.parts, width, &app.images, app.true_color);
-            let paragraph = Paragraph::new(lines)
+            let screen = reader::layout(&reader.parts, inner.width, &app.images, app.true_color);
+            reader.max_scroll = (screen.lines.len() as u16).saturating_sub(inner.height);
+            reader.scroll = reader.scroll.min(reader.max_scroll);
+            reader.links = screen.links;
+            let paragraph = Paragraph::new(screen.lines)
                 .block(block)
-                .wrap(Wrap { trim: false })
                 .scroll((reader.scroll, 0));
             frame.render_widget(paragraph, area);
         }
@@ -195,7 +230,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Pane::Articles => {
             "j/k move · enter read · m read/unread · s star · A all read · o browser · esc back"
         }
-        Pane::Reader => "j/k/space scroll · m read/unread · s star · o browser · esc back",
+        Pane::Reader => {
+            "j/k/space scroll · click or L for links · m read/unread · s star · o browser · esc back"
+        }
     };
     let status = if app.is_refreshing() {
         "Refreshing…"
