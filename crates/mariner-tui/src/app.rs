@@ -4,12 +4,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mariner_core::{Article, ArticleFilter, Feed};
+use mariner_core::{AddFeedResult, Article, ArticleFilter, Feed};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
+use crate::dialog::{Action, Dialog};
 use crate::images::Images;
 use crate::reader::{self, Part};
 use crate::{LocalAccount, halfblock, ui};
@@ -67,7 +68,10 @@ pub struct App<'a> {
     pub true_color: bool,
     pub focus: Pane,
     pub status: String,
+    /// A dialog over the panes, which takes every key while it's open.
+    pub dialog: Option<Dialog>,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
+    adding: Option<JoinHandle<mariner_core::Result<AddFeedResult>>>,
     quit: bool,
 }
 
@@ -94,7 +98,9 @@ impl<'a> App<'a> {
             true_color: halfblock::true_color_terminal(),
             focus: Pane::Feeds,
             status: String::new(),
+            dialog: None,
             refreshing: None,
+            adding: None,
             quit: false,
         }
     }
@@ -121,8 +127,17 @@ impl<'a> App<'a> {
             self.quit = true;
             return;
         }
+        if let Some(dialog) = &mut self.dialog {
+            match dialog.on_key(key) {
+                Action::None => {}
+                Action::Close => self.dialog = None,
+                Action::Add(url) => self.add_feed(url),
+            }
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('a') => self.dialog = Some(Dialog::add()),
             KeyCode::Char('j') | KeyCode::Down => self.move_by(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_by(-1),
             KeyCode::Char(' ') | KeyCode::PageDown => self.move_by(10),
@@ -140,8 +155,16 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Notices a finished refresh.
+    /// Notices a finished refresh or add.
     fn tick(&mut self) {
+        if self.adding.as_ref().is_some_and(JoinHandle::is_finished) {
+            let handle = self.adding.take().expect("checked");
+            let result = match self.runtime.block_on(handle) {
+                Ok(result) => result.map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            self.added(result);
+        }
         if self
             .refreshing
             .as_ref()
@@ -154,6 +177,51 @@ impl<'a> App<'a> {
                 Err(error) => format!("Refresh failed: {error}"),
             };
             self.reload();
+        }
+    }
+
+    /// Finds and subscribes to the feeds at `url` in the background.
+    fn add_feed(&mut self, url: String) {
+        let account = Arc::clone(&self.account);
+        let task_url = url.clone();
+        self.adding = Some(
+            self.runtime
+                .spawn(async move { account.add_feed(&task_url, None, None).await }),
+        );
+        self.dialog = Some(Dialog::Adding { url });
+    }
+
+    /// Shows what adding a feed led to: the new feed selected, a list to
+    /// choose from, or the URL again with what went wrong.
+    fn added(&mut self, result: Result<AddFeedResult, String>) {
+        let url = match &self.dialog {
+            Some(Dialog::Adding { url }) => Some(url.clone()),
+            _ => None,
+        };
+        let retry = |message: &str| Dialog::Add {
+            input: url.clone().unwrap_or_default(),
+            message: Some(message.to_string()),
+        };
+        match result {
+            Ok(AddFeedResult::Added(feed)) => {
+                self.dialog = None;
+                self.status = format!("Added {}", feed.title);
+                self.reload();
+                if let Some(index) = self.feeds.iter().position(|listed| listed.id == feed.id) {
+                    self.feed_list.select(Some(index + 1));
+                    self.article_list.select(None);
+                    self.load_articles();
+                }
+                self.focus = Pane::Feeds;
+            }
+            Ok(AddFeedResult::Choices(choices)) => self.dialog = Some(Dialog::choose(choices)),
+            Ok(AddFeedResult::NotFound) => self.dialog = Some(retry("No feed found there.")),
+            Err(error) => self.dialog = Some(retry(&error)),
+        }
+        // A dialog closed while adding reports in the status line instead.
+        if url.is_none() && self.dialog.is_some() {
+            self.dialog = None;
+            self.status = "Couldn't add the feed".into();
         }
     }
 
@@ -512,6 +580,96 @@ mod tests {
         assert_eq!(app.focus, Pane::Articles);
         press(&mut app, KeyCode::Char('m'));
         assert_eq!(app.unread.get("f"), Some(&2), "m marks it unread again");
+    }
+
+    fn app<'a>(runtime: &'a Runtime, dir: &std::path::Path) -> App<'a> {
+        let images = Images::new(HttpFetcher::new().unwrap());
+        let mut app = App::new(runtime, account(runtime, dir), images);
+        app.reload();
+        app
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    #[test]
+    fn the_add_dialog_takes_typing_until_closed() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "example.org/quiet");
+        press(&mut app, KeyCode::Backspace);
+        let screen = render(&mut app, 100);
+        if std::env::var_os("MARINER_PRINT_UI").is_some() {
+            println!("{screen}");
+        }
+        assert!(
+            screen.contains(" Add feed ") && screen.contains("URL: example.org/quie"),
+            "{screen}"
+        );
+        assert!(!app.quit, "q in the URL doesn't quit");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(app.dialog.is_none());
+        assert!(!render(&mut app, 100).contains(" Add feed "));
+    }
+
+    #[test]
+    fn shows_what_adding_led_to() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+
+        app.dialog = Some(Dialog::Adding {
+            url: "https://example.org".into(),
+        });
+        app.added(Ok(AddFeedResult::NotFound));
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains("No feed found there.") && screen.contains("URL: https://example.org"),
+            "{screen}"
+        );
+
+        app.dialog = Some(Dialog::Adding {
+            url: "https://example.org".into(),
+        });
+        let choice = |url: &str, title: &str| mariner_core::FeedChoice {
+            url: url.into(),
+            title: Some(title.into()),
+        };
+        app.added(Ok(AddFeedResult::Choices(vec![
+            choice("https://example.org/posts.xml", "Posts"),
+            choice("https://example.org/comments.xml", "Comments"),
+        ])));
+        press(&mut app, KeyCode::Char('j'));
+        let screen = render(&mut app, 100);
+        assert!(
+            screen.contains("Posts") && screen.contains("Comments"),
+            "{screen}"
+        );
+        let Some(Dialog::Choose { list, .. }) = &app.dialog else {
+            panic!("expected choices");
+        };
+        assert_eq!(list.selected(), Some(1));
+
+        app.dialog = Some(Dialog::Adding {
+            url: "https://example.com/feed.xml".into(),
+        });
+        let feed = app.feeds[0].clone();
+        app.feed_list.select(Some(0));
+        app.added(Ok(AddFeedResult::Added(feed)));
+        assert!(app.dialog.is_none());
+        assert_eq!(
+            app.feed_list.selected(),
+            Some(1),
+            "the new feed is selected"
+        );
+        assert_eq!(app.status, "Added Example Feed");
     }
 
     fn tempfile_dir() -> tempfile::TempDir {

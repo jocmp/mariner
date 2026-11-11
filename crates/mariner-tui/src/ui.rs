@@ -6,9 +6,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, Pane};
+use crate::dialog::Dialog;
 use crate::reader;
 
 /// Narrower terminals show one pane at a time.
@@ -35,6 +36,77 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_status(frame, app, status);
+    if let Some(dialog) = &mut app.dialog {
+        draw_dialog(frame, dialog);
+    }
+}
+
+/// The dialog, centered over everything.
+fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
+    let screen = frame.area();
+    let width = screen.width.saturating_sub(4).min(72);
+    let height = match dialog {
+        Dialog::Choose { choices, .. } => (choices.len() as u16 + 4).min(screen.height),
+        _ => 6.min(screen.height),
+    };
+    let area = Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + screen.height.saturating_sub(height) / 3,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, area);
+    match dialog {
+        Dialog::Add { input, message } => {
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::from("URL: "),
+                    Span::from(format!("{input}▏")).bold(),
+                ]),
+                Line::default(),
+            ];
+            match message {
+                Some(message) => lines.push(Line::from(message.clone()).red()),
+                None => {
+                    lines.push(Line::from("A site or feed URL; Enter to add, Esc to cancel").dim())
+                }
+            }
+            let paragraph = Paragraph::new(lines)
+                .block(pane("Add feed", true))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
+        Dialog::Adding { url } => {
+            let lines = vec![
+                Line::from(format!("Finding feeds at {url}…")),
+                Line::default(),
+                Line::from("Esc to close; the feed is still added").dim(),
+            ];
+            let paragraph = Paragraph::new(lines)
+                .block(pane("Add feed", true))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
+        Dialog::Choose { choices, list } => {
+            let items: Vec<ListItem> = choices
+                .iter()
+                .map(|choice| {
+                    let title = choice.title.clone().unwrap_or_else(|| "(Untitled)".into());
+                    ListItem::new(Line::from(vec![
+                        Span::from(title),
+                        Span::from(format!("  {}", choice.url)).dim(),
+                    ]))
+                })
+                .collect();
+            let list_widget = List::new(items)
+                .block(
+                    pane("Several feeds; pick one", true)
+                        .title_bottom(" Enter to add · Esc to cancel "),
+                )
+                .highlight_style(highlight());
+            frame.render_stateful_widget(list_widget, area, list);
+        }
+    }
 }
 
 fn draw_feeds(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -119,7 +191,7 @@ fn draw_reader(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let keys = match app.focus {
-        Pane::Feeds => "j/k move · enter open · f filter · r refresh · A all read · q quit",
+        Pane::Feeds => "j/k move · enter open · a add · f filter · r refresh · A all read · q quit",
         Pane::Articles => {
             "j/k move · enter read · m read/unread · s star · A all read · o browser · esc back"
         }
