@@ -7,7 +7,7 @@ struct ArticleListView: View {
     var body: some View {
         @Bindable var model = model
         List(model.articles, selection: $model.selectedArticleID) { article in
-            ArticleRow(article: article, feedTitle: model.feed(id: article.feedId)?.title)
+            ArticleRow(article: article, feed: model.feed(id: article.feedId))
                 .swipeActions(edge: .leading) {
                     Button(article.read ? "Unread" : "Read", systemImage: article.read ? "circle.fill" : "circle") {
                         Task { await model.setRead(article.id, !article.read) }
@@ -65,7 +65,7 @@ struct ArticleListView: View {
 
 private struct ArticleRow: View {
     let article: Article
-    let feedTitle: String?
+    let feed: Feed?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -78,13 +78,43 @@ private struct ArticleRow: View {
                     .font(.headline)
                     .foregroundStyle(article.read ? .secondary : .primary)
                     .lineLimit(3)
-                Text([feedTitle, article.publishedAt.formatted(date: .abbreviated, time: .omitted)]
+                Text([feed?.title, article.publishedAt.formatted(date: .abbreviated, time: .omitted)]
                     .compactMap(\.self)
                     .joined(separator: " · "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            Spacer(minLength: 8)
+            if let feed {
+                FeedIcon(feed: feed)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 }
+            }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// A feed's icon, or its first letter while there's none to show.
+struct FeedIcon: View {
+    let feed: Feed
+    var size: CGFloat = 20
+
+    var body: some View {
+        AsyncImage(url: feed.faviconUrl.flatMap(URL.init(string:))) { phase in
+            if case .success(let image) = phase {
+                image
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Text(feed.title.prefix(1).uppercased())
+                    .font(.system(size: size * 0.6, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.fill.tertiary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(.rect(cornerRadius: size * 0.22))
+        .accessibilityHidden(true)
     }
 }
