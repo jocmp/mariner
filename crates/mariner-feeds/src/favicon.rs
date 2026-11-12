@@ -10,15 +10,21 @@ const PREFERRED_SIZE: u32 = 64;
 
 /// The icon for the site at `site_url`: the best `<link rel="icon">` or
 /// `apple-touch-icon` on its page, or else `/favicon.ico`. SVG icons are
-/// skipped, as image views on phones don't draw them. `None` only when
-/// `site_url` isn't a URL.
+/// skipped, as image views on phones don't draw them. `/favicon.ico` is on
+/// the site the URL redirects to, so `http` sites that moved get `https`.
+/// `None` only when `site_url` isn't a URL.
 pub async fn find(fetcher: &impl Fetch, site_url: &str) -> Option<String> {
-    let site = Url::parse(site_url).ok()?;
-    if let Ok(response) = fetcher.fetch(&Request::get(site_url)).await
-        && response.is_success()
-        && let Some(icon) = icon_on_page(&response)
-    {
-        return Some(icon);
+    let mut site = Url::parse(site_url).ok()?;
+    if let Ok(response) = fetcher.fetch(&Request::get(site_url)).await {
+        if response.is_success()
+            && let Some(icon) = icon_on_page(&response)
+        {
+            return Some(icon);
+        }
+        // Where the site redirected to, often https.
+        if let Ok(url) = Url::parse(&response.url) {
+            site = url;
+        }
     }
     site.join("/favicon.ico").ok().map(String::from)
 }

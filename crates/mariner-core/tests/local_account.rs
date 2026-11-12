@@ -458,3 +458,23 @@ fn takes_an_icon_from_the_feed_or_its_site() {
         );
     });
 }
+
+#[test]
+fn looks_for_favicon_ico_where_the_site_moved() {
+    block_on(async {
+        let network = Network::default()
+            .with(
+                FEED_URL,
+                &RSS.replace("https://example.com/", "http://example.com/"),
+            )
+            .with("https://example.com/", "<p>No icons</p>");
+        network.redirect("http://example.com/", 301, "https://example.com/");
+        let (_dir, account) = local_account(&network).await;
+        let feed = account.subscribe(FEED_URL, None).await.unwrap();
+        assert_eq!(feed.site_url.as_deref(), Some("http://example.com/"));
+        assert_eq!(
+            feed.favicon_url.as_deref(),
+            Some("https://example.com/favicon.ico")
+        );
+    });
+}
