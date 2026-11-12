@@ -40,18 +40,28 @@ pub enum FindError {
     Status { url: String, status: u16 },
 }
 
-/// Finds the feeds for `url`, which may lack a scheme (`example.com`).
+/// Finds the feeds for `url`, which may lack a scheme (`example.com`): then
+/// it's tried over `https`, and over `http` only if that can't connect.
 /// Fails only when `url` itself can't be fetched; finding nothing is an
 /// empty list.
 pub async fn find(fetcher: &impl Fetch, url: &str) -> Result<Vec<FoundFeed>, FindError> {
-    let url = clean_url(url).ok_or_else(|| FindError::InvalidUrl(url.to_string()))?;
-    let response = fetcher
-        .fetch(&Request::get(&url))
-        .await
-        .map_err(|source| FindError::Fetch {
-            url: url.clone(),
-            source,
-        })?;
+    let candidates = clean_urls(url).ok_or_else(|| FindError::InvalidUrl(url.to_string()))?;
+    let mut failure = None;
+    for url in candidates {
+        match fetcher.fetch(&Request::get(&url)).await {
+            Ok(response) => return find_in(fetcher, url, response).await,
+            Err(source) => failure = Some(FindError::Fetch { url, source }),
+        }
+    }
+    Err(failure.expect("there's always a URL to try"))
+}
+
+/// The feeds on the page `url` returned.
+async fn find_in(
+    fetcher: &impl Fetch,
+    url: String,
+    response: Response,
+) -> Result<Vec<FoundFeed>, FindError> {
     if !response.is_success() {
         return Err(FindError::Status {
             url,
@@ -90,20 +100,30 @@ pub fn find_options(response: &Response) -> Vec<String> {
     }
 }
 
-/// Adds `http://` when the URL has no scheme, and replaces a scheme
-/// other than HTTP(S) with `http`.
-fn clean_url(url: &str) -> Option<String> {
+/// The URLs to try for what was typed: with no scheme, `https://` and then
+/// `http://`; with a scheme other than HTTP(S) (`feed://`), `http`;
+/// otherwise the URL itself.
+fn clean_urls(url: &str) -> Option<Vec<String>> {
     let url = url.trim();
-    let with_scheme = if url.contains("://") {
-        url.to_string()
-    } else {
-        format!("http://{}", url.trim_start_matches('/'))
-    };
-    let mut parsed = Url::parse(&with_scheme).ok()?;
+    if !url.contains("://") {
+        let rest = url.trim_start_matches('/');
+        return ["https", "http"]
+            .into_iter()
+            .map(|scheme| parse_web_url(&format!("{scheme}://{rest}")))
+            .collect();
+    }
+    let mut parsed = Url::parse(url).ok()?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        let rest = &with_scheme[with_scheme.find("://")? + 3..];
+        let rest = &url[url.find("://")? + 3..];
         parsed = Url::parse(&format!("http://{rest}")).ok()?;
     }
+    parsed.host_str()?;
+    Some(vec![parsed.to_string()])
+}
+
+/// `url`, normalized, when it's a web URL with a host.
+fn parse_web_url(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
     parsed.host_str()?;
     Some(parsed.to_string())
 }

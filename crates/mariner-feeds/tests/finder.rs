@@ -279,11 +279,38 @@ mod feed_finder {
     }
 
     #[tokio::test]
-    async fn adds_a_missing_scheme() {
-        let stub = Stub::default().with("http://example.com/atom.xml", ATOM);
+    async fn adds_https_to_a_url_without_a_scheme() {
+        let stub = Stub::default()
+            .with("https://example.com/atom.xml", ATOM)
+            .with("http://example.com/atom.xml", ATOM);
+        assert_eq!(
+            found(&stub, "example.com/atom.xml").await,
+            ["https://example.com/atom.xml"]
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_http_when_https_cant_connect() {
+        let stub = Stub::default()
+            .unreachable("https://example.com/atom.xml")
+            .with("http://example.com/atom.xml", ATOM);
         assert_eq!(
             found(&stub, "example.com/atom.xml").await,
             ["http://example.com/atom.xml"]
+        );
+        assert_eq!(
+            *stub.requested.lock().unwrap(),
+            [
+                "https://example.com/atom.xml",
+                "http://example.com/atom.xml"
+            ]
+        );
+
+        let stub = Stub::default().with("http://example.com/atom.xml", ATOM);
+        let result = find(&stub, "example.com/atom.xml").await;
+        assert!(
+            matches!(result, Err(FindError::Status { status: 404, .. })),
+            "an https error page isn't a reason to try http"
         );
     }
 
@@ -374,14 +401,22 @@ fn urls(found: Vec<mariner_feeds::finder::FoundFeed>) -> Vec<String> {
     found.into_iter().map(|found| found.url).collect()
 }
 
-/// Serves registered bodies with status 200, and 404 for anything else.
+/// Serves registered bodies with status 200, can't connect to unreachable
+/// URLs, and serves 404 for anything else.
 #[derive(Default)]
 struct Stub {
     responses: HashMap<String, Response>,
+    /// URLs that can't connect.
+    unreachable: Vec<String>,
     requested: Mutex<Vec<String>>,
 }
 
 impl Stub {
+    fn unreachable(mut self, url: &str) -> Self {
+        self.unreachable.push(normalize(url));
+        self
+    }
+
     fn with(mut self, url: &str, body: &str) -> Self {
         let url = normalize(url);
         self.responses.insert(
@@ -407,6 +442,9 @@ impl Fetch for Stub {
     async fn fetch(&self, request: &Request) -> Result<Response, FetchError> {
         let url = normalize(&request.url);
         self.requested.lock().unwrap().push(url.clone());
+        if self.unreachable.contains(&url) {
+            return Err(FetchError::Connect("no route".into()));
+        }
         Ok(self.responses.get(&url).cloned().unwrap_or(Response {
             url,
             status: 404,
