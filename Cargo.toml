@@ -48,14 +48,19 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
-# Whole-program optimization for the apps' library and the TUI: about
-# 0.9 MB smaller on Android, at the cost of slower release builds. Panics
-# must still unwind, so UniFFI can turn them into errors.
-[profile.release]
+# The apps' library: release, with whole-program optimization, about
+# 0.9 MB smaller on Android but slower to build, so the TUI's release
+# builds don't use it. Panics must still unwind, so UniFFI can turn them
+# into errors. Build with `--profile mobile`.
+[profile.mobile]
+inherits = "release"
 lto = true
 codegen-units = 1
 
 # Bundled SQLite optimized for size: about 0.6 MB smaller per platform,
 # with little effect on its speed.
 [profile.release.package.libsqlite3-sys]
+opt-level = "s"
+
+[profile.mobile.package.libsqlite3-sys]
 opt-level = "s"

@@ -24,13 +24,13 @@ bindings:
 # Builds the Rust core for iOS (device and simulator) into
 # ios/MarinerKit: MarinerFFI.xcframework and the Swift bindings.
 ios-kit: bindings
-	$(foreach target,$(IOS_TARGETS),IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) cargo build --release --locked -p mariner-ffi --target $(target) &&) true
+	$(foreach target,$(IOS_TARGETS),IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) cargo build --profile mobile --locked -p mariner-ffi --target $(target) &&) true
 	rm -rf target/headers $(IOS_KIT)/MarinerFFI.xcframework
 	mkdir -p target/headers
 	cp $(BINDINGS)/MarinerFFI.h target/headers/
 	cp $(BINDINGS)/MarinerFFI.modulemap target/headers/module.modulemap
 	xcodebuild -create-xcframework \
-		$(foreach target,$(IOS_TARGETS),-library target/$(target)/release/libmariner_ffi.a -headers target/headers) \
+		$(foreach target,$(IOS_TARGETS),-library target/$(target)/mobile/libmariner_ffi.a -headers target/headers) \
 		-output $(IOS_KIT)/MarinerFFI.xcframework
 	cp $(BINDINGS)/Mariner.swift $(IOS_KIT)/Sources/Mariner/
 
