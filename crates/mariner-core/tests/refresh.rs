@@ -23,7 +23,7 @@ fn stores_new_articles() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
 
         network.respond(FEED_URL, 200, &[], &rss(&["2", "1"]));
         account.refresh(None).await.unwrap();
@@ -45,7 +45,7 @@ fn sends_conditional_headers_and_skips_not_modified() {
             &rss(&["1"]),
         );
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         account.refresh(None).await.unwrap();
 
         network.clear_requests();
@@ -71,7 +71,7 @@ fn skips_an_unchanged_body() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         account.refresh(None).await.unwrap();
         let fingerprint = crawl(&account).await.fingerprint;
         assert!(fingerprint.is_some());
@@ -89,7 +89,7 @@ fn backs_off_a_failing_feed() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
 
         network.respond(FEED_URL, 503, &[("Retry-After", "60")], "");
         account.refresh(None).await.unwrap();
@@ -113,8 +113,8 @@ fn records_network_errors_and_feeds_that_stop_being_feeds() {
             .with(FEED_URL, &rss(&["1"]))
             .with(other, &rss(&["a"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
-        account.add_feed(other, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
+        account.subscribe(other, None).await.unwrap();
 
         network.unreachable(FEED_URL);
         network.respond(other, 200, &[], "<html><body>Moved</body></html>");
@@ -137,10 +137,7 @@ fn trusts_a_permanent_redirect_after_five_sightings() {
         let moved = "https://feeds.example.com/feed.xml";
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        let feed = match account.add_feed(FEED_URL, None, None).await.unwrap() {
-            mariner_core::AddFeedResult::Added(feed) => feed,
-            other => panic!("{other:?}"),
-        };
+        let feed = account.subscribe(FEED_URL, None).await.unwrap();
 
         network.redirect(FEED_URL, 301, moved);
         for refresh in 1..=5 {
@@ -166,7 +163,7 @@ fn updates_changed_articles_and_keeps_their_status() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         let id = article_ids(&account).await["1"].clone();
         account.mark_read(std::slice::from_ref(&id)).await.unwrap();
 
@@ -184,7 +181,7 @@ fn deletes_articles_that_left_the_feed_after_30_days() {
         let network =
             Network::default().with(FEED_URL, &rss(&["old", "recent", "starred", "listed"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         let ids = article_ids(&account).await;
         account.add_star(&[ids["starred"].clone()]).await.unwrap();
         arrived_days_ago(&account, &["old", "starred", "listed"], 31).await;
@@ -203,7 +200,7 @@ fn an_empty_feed_deletes_nothing() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         arrived_days_ago(&account, &["1"], 31).await;
 
         network.respond(FEED_URL, 200, &[], &rss(&[]));
@@ -217,7 +214,7 @@ fn the_cutoff_deletes_read_articles_once_they_leave_the_feed() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["read", "unread", "listed"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         let ids = article_ids(&account).await;
         account
             .mark_read(&[ids["read"].clone(), ids["listed"].clone()])
@@ -236,7 +233,7 @@ fn tombstones_keep_deleted_articles_out_until_they_expire() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1", "2"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         arrived_days_ago(&account, &["1", "2"], 31).await;
         network.respond(FEED_URL, 200, &[], &rss(&["3"]));
         account.refresh(None).await.unwrap();
@@ -269,7 +266,7 @@ fn stale_items_start_read() {
             </channel></rss>"#;
         let network = Network::default().with(FEED_URL, feed);
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
         let ids = article_ids(&account).await;
         assert_eq!(read_ids(&account).await, [ids["stale"].clone()]);
     });
@@ -421,7 +418,7 @@ fn takes_the_feeds_new_title_and_site() {
     block_on(async {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
-        account.add_feed(FEED_URL, None, None).await.unwrap();
+        account.subscribe(FEED_URL, None).await.unwrap();
 
         network.respond(
             FEED_URL,

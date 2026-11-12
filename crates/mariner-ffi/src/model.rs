@@ -64,17 +64,7 @@ pub enum ArticleScope {
     Tag { name: String },
 }
 
-/// What adding a feed by URL led to.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum AddFeedResult {
-    /// Subscribed, or already subscribed.
-    Added { feed: Feed },
-    /// The URL leads to several feeds; add one of them by its URL.
-    Choices { choices: Vec<FeedChoice> },
-    /// The URL leads to no feed.
-    NotFound,
-}
-
+/// A feed a URL leads to, to subscribe to by its URL.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FeedChoice {
     pub url: String,
@@ -169,20 +159,11 @@ impl From<ArticleScope> for core::ArticleScope {
     }
 }
 
-impl From<core::AddFeedResult> for AddFeedResult {
-    fn from(result: core::AddFeedResult) -> Self {
-        match result {
-            core::AddFeedResult::Added(feed) => AddFeedResult::Added { feed: feed.into() },
-            core::AddFeedResult::Choices(choices) => AddFeedResult::Choices {
-                choices: choices
-                    .into_iter()
-                    .map(|choice| FeedChoice {
-                        url: choice.url,
-                        title: choice.title,
-                    })
-                    .collect(),
-            },
-            core::AddFeedResult::NotFound => AddFeedResult::NotFound,
+impl From<core::FeedChoice> for FeedChoice {
+    fn from(choice: core::FeedChoice) -> Self {
+        FeedChoice {
+            url: choice.url,
+            title: choice.title,
         }
     }
 }

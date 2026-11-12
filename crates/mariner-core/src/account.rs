@@ -13,9 +13,7 @@ use mariner_feeds::finder::FoundFeed;
 use crate::database::Database;
 use std::collections::HashMap;
 
-use crate::model::{
-    AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed, Tag,
-};
+use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, Tag};
 use crate::{Result, queries, time};
 
 mod articles;
@@ -116,19 +114,22 @@ impl<F: Fetch + Send + Sync> Account<F> {
         self.set_status(article_ids, Status::Unstarred).await
     }
 
-    /// Subscribes to the feed `url` leads to, with an optional title and
-    /// tags. A feed already subscribed at `url` is returned as is.
-    pub async fn add_feed(
-        &self,
-        url: &str,
-        title: Option<&str>,
-        tag_names: Option<&[String]>,
-    ) -> Result<AddFeedResult> {
+    /// The feeds `url` leads to, to pick one to subscribe to. `url` can be
+    /// a site or a feed, and may lack a scheme. Subscribes to nothing; an
+    /// empty list means there's no feed there.
+    pub async fn find_feeds(&self, url: &str) -> Result<Vec<FeedChoice>> {
+        self.delegate.find_feeds(self, url).await
+    }
+
+    /// Subscribes to the feed at `url`, one of the choices from
+    /// [`Self::find_feeds`], with an optional title. A feed already
+    /// subscribed is returned as is. To put it in folders, follow with
+    /// [`Self::update_feed`].
+    pub async fn subscribe(&self, url: &str, title: Option<&str>) -> Result<Feed> {
         if let Some(feed) = ExistingFeed::find(&self.database, url).await? {
-            return Ok(AddFeedResult::Added(feed));
+            return Ok(feed);
         }
-        let tag_names = tag_names.unwrap_or_default();
-        self.delegate.add_feed(self, url, title, tag_names).await
+        self.delegate.subscribe(self, url, title).await
     }
 
     /// Renames a feed and replaces its tags.
@@ -174,18 +175,13 @@ impl<F: Fetch + Send + Sync> Account<F> {
         feeds::remove_tag(&self.database, name).await
     }
 
-    /// Stores a feed the delegate found, with its tags and current entries.
-    pub(crate) async fn subscribe(
-        &self,
-        found: FoundFeed,
-        title: Option<&str>,
-        tag_names: &[String],
-    ) -> Result<AddFeedResult> {
+    /// Stores a feed the delegate subscribed to, with its current entries.
+    /// One stored already (under the URL it redirected to) is returned as is.
+    pub(crate) async fn store_feed(&self, found: FoundFeed, title: Option<&str>) -> Result<Feed> {
         if let Some(feed) = ExistingFeed::find(&self.database, &found.url).await? {
-            return Ok(AddFeedResult::Added(feed));
+            return Ok(feed);
         }
-        let feed = feeds::subscribe(&self.database, found, title, tag_names.to_vec()).await?;
-        Ok(AddFeedResult::Added(feed))
+        feeds::subscribe(&self.database, found, title).await
     }
 
     async fn set_status(&self, article_ids: &[String], status: Status) -> Result<()> {
@@ -207,15 +203,20 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
         }
     }
 
-    async fn add_feed(
+    async fn find_feeds(&self, account: &Account<F>, url: &str) -> Result<Vec<FeedChoice>> {
+        match self {
+            Delegate::Local(delegate) => delegate.find_feeds(account, url).await,
+        }
+    }
+
+    async fn subscribe(
         &self,
         account: &Account<F>,
         url: &str,
         title: Option<&str>,
-        tag_names: &[String],
-    ) -> Result<AddFeedResult> {
+    ) -> Result<Feed> {
         match self {
-            Delegate::Local(delegate) => delegate.add_feed(account, url, title, tag_names).await,
+            Delegate::Local(delegate) => delegate.subscribe(account, url, title).await,
         }
     }
 
@@ -280,15 +281,21 @@ pub(crate) trait AccountDelegate<F> {
         cutoff: Option<DateTime<Utc>>,
     ) -> impl Future<Output = Result<()>> + Send;
 
-    /// Finds what `url` leads to, subscribing through
-    /// [`Account::subscribe`] when it's one feed.
-    fn add_feed(
+    /// The feeds `url` leads to, without subscribing.
+    fn find_feeds(
+        &self,
+        account: &Account<F>,
+        url: &str,
+    ) -> impl Future<Output = Result<Vec<FeedChoice>>> + Send;
+
+    /// Subscribes to the feed at `url` (with the service, for a sync
+    /// account), storing it through [`Account::store_feed`].
+    fn subscribe(
         &self,
         account: &Account<F>,
         url: &str,
         title: Option<&str>,
-        tag_names: &[String],
-    ) -> impl Future<Output = Result<AddFeedResult>> + Send;
+    ) -> impl Future<Output = Result<Feed>> + Send;
 
     fn set_status(
         &self,

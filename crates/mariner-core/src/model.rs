@@ -79,18 +79,7 @@ impl ArticleScope {
     }
 }
 
-/// What adding a feed by URL led to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AddFeedResult {
-    /// Subscribed, or already subscribed.
-    Added(Feed),
-    /// The URL leads to several feeds; add one of them by its URL.
-    Choices(Vec<FeedChoice>),
-    /// The URL leads to no feed.
-    NotFound,
-}
-
-/// One of several feeds a URL leads to.
+/// A feed a URL leads to, to subscribe to by its URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedChoice {
     pub url: String,

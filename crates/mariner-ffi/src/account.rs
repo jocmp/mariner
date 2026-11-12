@@ -9,9 +9,7 @@ use mariner_core::{Database, Kind};
 
 use crate::error::MarinerError;
 use crate::http::{HttpClient, PlatformFetcher};
-use crate::model::{
-    AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed, Tag,
-};
+use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, Tag};
 
 type Result<T> = std::result::Result<T, MarinerError>;
 
@@ -86,19 +84,17 @@ impl Account {
         Ok(self.account.refresh(cutoff.map(Into::into)).await?)
     }
 
-    /// Subscribes to the feed `url` leads to, with an optional title and
-    /// tags.
-    pub async fn add_feed(
-        &self,
-        url: String,
-        title: Option<String>,
-        tag_names: Option<Vec<String>>,
-    ) -> Result<AddFeedResult> {
-        let result = self
-            .account
-            .add_feed(&url, title.as_deref(), tag_names.as_deref())
-            .await?;
-        Ok(result.into())
+    /// The feeds `url` leads to, to pick one to subscribe to. `url` can be
+    /// a site or a feed. Subscribes to nothing; empty means no feed there.
+    pub async fn find_feeds(&self, url: String) -> Result<Vec<FeedChoice>> {
+        Ok(into_all(self.account.find_feeds(&url).await?))
+    }
+
+    /// Subscribes to the feed at `url`, one of the choices from
+    /// `find_feeds`, with an optional title. To put it in folders, follow
+    /// with `update_feed`.
+    pub async fn subscribe(&self, url: String, title: Option<String>) -> Result<Feed> {
+        Ok(self.account.subscribe(&url, title.as_deref()).await?.into())
     }
 
     /// Renames a feed and replaces its tags.

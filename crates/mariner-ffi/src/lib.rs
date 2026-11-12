@@ -20,8 +20,6 @@ pub use condense::{
 };
 pub use error::MarinerError;
 pub use http::{HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse};
-pub use model::{
-    AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, Tag,
-};
+pub use model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, Tag};
 
 uniffi::setup_scaffolding!();

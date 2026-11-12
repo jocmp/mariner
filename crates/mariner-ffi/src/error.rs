@@ -11,6 +11,9 @@ pub enum MarinerError {
     /// No response: offline, timed out, or the URL is no good.
     #[error("{reason}")]
     Network { reason: String },
+    /// The URL has no feed to subscribe to.
+    #[error("no feed at {url}")]
+    NoFeed { url: String },
     /// A response, but not a successful one.
     #[error("{url} returned HTTP {status}")]
     Status { url: String, status: u16 },
@@ -33,6 +36,7 @@ impl From<Error> for MarinerError {
             }
             Error::Find(_) => MarinerError::Network { reason },
             Error::Extract(_) => MarinerError::Extract { reason },
+            Error::NoFeed { url } => MarinerError::NoFeed { url },
         }
     }
 }

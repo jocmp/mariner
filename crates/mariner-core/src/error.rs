@@ -13,6 +13,8 @@ pub enum Error {
     Fetch(#[from] FetchError),
     #[error("{url} returned HTTP {status}")]
     Status { url: String, status: u16 },
+    #[error("no feed at {url}")]
+    NoFeed { url: String },
     #[error("couldn't extract the article: {0}")]
     Extract(#[from] mercury_parser::Error),
 }

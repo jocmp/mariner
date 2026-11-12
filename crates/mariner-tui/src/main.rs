@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use mariner_core::{Account, AddFeedResult, Database, Kind};
+use mariner_core::{Account, Database, Kind};
 use mariner_feeds::fetch::HttpFetcher;
 
 mod app;
@@ -61,13 +61,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         None => app::run(&runtime, account),
         Some(Command::Add { url, title, tags }) => {
-            let tags = (!tags.is_empty()).then_some(tags);
-            let result =
-                runtime.block_on(account.add_feed(&url, title.as_deref(), tags.as_deref()))?;
-            match result {
-                AddFeedResult::Added(feed) => println!("Added {} ({})", feed.title, feed.feed_url),
-                AddFeedResult::NotFound => println!("No feed found at {url}"),
-                AddFeedResult::Choices(choices) => {
+            let mut choices = runtime.block_on(account.find_feeds(&url))?;
+            match choices.len() {
+                0 => println!("No feed found at {url}"),
+                1 => {
+                    let choice = choices.remove(0);
+                    let mut feed =
+                        runtime.block_on(account.subscribe(&choice.url, title.as_deref()))?;
+                    if !tags.is_empty() {
+                        feed = runtime.block_on(account.update_feed(&feed, &feed.title, &tags))?;
+                    }
+                    println!("Added {} ({})", feed.title, feed.feed_url);
+                }
+                _ => {
                     println!("{url} has several feeds; add one of these:");
                     for choice in choices {
                         let title = choice.title.unwrap_or_default();

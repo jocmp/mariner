@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, Areas, Pane, Row};
-use crate::dialog::{Dialog, Target};
+use crate::dialog::{Button, Dialog, FolderPicker, Target};
 use crate::reader;
 
 /// Narrower terminals show one pane at a time.
@@ -51,17 +51,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_status(frame, app, status);
+    app.buttons.clear();
     if let Some(dialog) = &mut app.dialog {
-        draw_dialog(frame, dialog);
+        draw_dialog(frame, dialog, &mut app.buttons);
     }
 }
 
 /// The dialog, centered over everything.
-fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
+fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog, buttons: &mut Vec<(Rect, Button)>) {
     let screen = frame.area();
     let width = screen.width.saturating_sub(4).min(72);
     let height = match dialog {
-        Dialog::Choose { choices, .. } => (choices.len() as u16 + 4).min(screen.height),
+        // The list, a blank line and two buttons.
+        Dialog::Choose { choices, .. } => (choices.len() as u16 + 7).min(screen.height),
         Dialog::Links { links, .. } => {
             (links.len() as u16 + 2).min(screen.height.saturating_sub(2))
         }
@@ -91,11 +93,22 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
                 .wrap(Wrap { trim: true });
             frame.render_widget(paragraph, area);
         }
-        Dialog::Adding { url } => {
+        Dialog::Finding { url } => {
             let lines = vec![
                 Line::from(format!("Finding feeds at {url}…")),
                 Line::default(),
-                Line::from("Esc to close; the feed is still added").dim(),
+                Line::from("Esc to cancel").dim(),
+            ];
+            let paragraph = Paragraph::new(lines)
+                .block(pane("Add feed", true))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
+        Dialog::Subscribing { title } => {
+            let lines = vec![
+                Line::from(format!("Subscribing to {title}…")),
+                Line::default(),
+                Line::from("Esc to close; it still subscribes").dim(),
             ];
             let paragraph = Paragraph::new(lines)
                 .block(pane("Add feed", true))
@@ -164,7 +177,23 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
                 .highlight_style(highlight());
             frame.render_stateful_widget(list_widget, area, list);
         }
-        Dialog::Choose { choices, list } => {
+        Dialog::Choose {
+            choices,
+            list,
+            focus,
+            folders,
+            ..
+        } => {
+            let block = pane("Add feed", true).title_bottom(" Tab to switch · Esc to cancel ");
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            let [list_area, _, add_area, subscribe_area] = Layout::vertical([
+                Constraint::Fill(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .areas(inner);
             let items: Vec<ListItem> = choices
                 .iter()
                 .map(|choice| {
@@ -175,13 +204,26 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog) {
                     ]))
                 })
                 .collect();
-            let list_widget = List::new(items)
-                .block(
-                    pane("Several feeds; pick one", true)
-                        .title_bottom(" Enter to add · Esc to cancel "),
-                )
-                .highlight_style(highlight());
-            frame.render_stateful_widget(list_widget, area, list);
+            frame.render_stateful_widget(
+                List::new(items).highlight_style(highlight()),
+                list_area,
+                list,
+            );
+            if folders.is_none() {
+                for (button_area, button) in [
+                    (add_area, Button::AddToFolder),
+                    (subscribe_area, Button::Subscribe),
+                ] {
+                    let drawn = draw_button(frame, button_area, button, *focus == button);
+                    buttons.push((drawn, button));
+                }
+            } else {
+                draw_button(frame, add_area, Button::AddToFolder, false);
+                draw_button(frame, subscribe_area, Button::Subscribe, false);
+            }
+            if let Some(picker) = folders {
+                draw_folder_picker(frame, area, picker, buttons);
+            }
         }
     }
 }
@@ -319,6 +361,75 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         ])
     };
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// A button: `[ Subscribe ]`, reversed when focused. Returns where it is.
+fn draw_button(frame: &mut Frame, area: Rect, button: Button, focused: bool) -> Rect {
+    let label = match button {
+        Button::AddToFolder => "[ Add to Folder ]",
+        Button::Subscribe => "[ Subscribe ]",
+    };
+    let area = Rect {
+        width: (label.chars().count() as u16).min(area.width),
+        ..area
+    };
+    let style = if focused {
+        highlight()
+    } else {
+        Style::default()
+    };
+    frame.render_widget(Paragraph::new(label).style(style), area);
+    area
+}
+
+/// The folder overlay, over the feed selector: folders to check, a new
+/// folder, and Subscribe.
+fn draw_folder_picker(
+    frame: &mut Frame,
+    under: Rect,
+    picker: &mut FolderPicker,
+    buttons: &mut Vec<(Rect, Button)>,
+) {
+    let width = under.width.saturating_sub(8).min(48);
+    let height = (picker.folders.len() as u16 + 6).min(under.height);
+    let area = Rect {
+        x: under.x + (under.width - width) / 2,
+        y: under.y + under.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, area);
+    let block = pane("Add to Folder", true).title_bottom(" Space to check · Esc to go back ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [list_area, _, subscribe_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let mut items: Vec<ListItem> = picker
+        .folders
+        .iter()
+        .map(|(name, checked)| {
+            let mark = if *checked { "[x] " } else { "[ ] " };
+            ListItem::new(format!("{mark}{name}"))
+        })
+        .collect();
+    items.push(match &picker.new_folder {
+        Some(name) => ListItem::new(Line::from(vec![
+            Span::from("New folder: "),
+            Span::from(format!("{name}▏")).bold(),
+        ])),
+        None => ListItem::new(Line::from("New folder…").italic()),
+    });
+    frame.render_stateful_widget(
+        List::new(items).highlight_style(highlight()),
+        list_area,
+        &mut picker.list,
+    );
+    let drawn = draw_button(frame, subscribe_area, Button::Subscribe, true);
+    buttons.push((drawn, Button::Subscribe));
 }
 
 /// A dialog with one text box.

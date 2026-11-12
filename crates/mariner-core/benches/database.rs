@@ -72,7 +72,7 @@ async fn subscribed(network: &Network) -> (tempfile::TempDir, Account<Network>) 
     network.serve_generation(0);
     let (dir, account) = empty_account(network.clone()).await;
     for feed in 0..FEEDS {
-        account.add_feed(&feed_url(feed), None, None).await.unwrap();
+        account.subscribe(&feed_url(feed), None).await.unwrap();
     }
     (dir, account)
 }

@@ -2,7 +2,7 @@
 
 use common::{Network, local_account};
 use futures_executor::block_on;
-use mariner_core::{Account, AddFeedResult, ArticleFilter, ArticleScope, Feed};
+use mariner_core::{Account, ArticleFilter, ArticleScope, Feed};
 
 mod common;
 
@@ -30,10 +30,8 @@ async fn two_feeds() -> (tempfile::TempDir, Account<Network>, Feed) {
         .with(NEWS, &rss("News", &["n1", "n2", "n3"], 0))
         .with(BLOG, &rss("Blog", &["b1", "b2"], 10));
     let (dir, account) = local_account(&network).await;
-    let AddFeedResult::Added(news) = account.add_feed(NEWS, None, None).await.unwrap() else {
-        panic!("expected a feed");
-    };
-    account.add_feed(BLOG, None, None).await.unwrap();
+    let news = account.subscribe(NEWS, None).await.unwrap();
+    account.subscribe(BLOG, None).await.unwrap();
     (dir, account, news)
 }
 

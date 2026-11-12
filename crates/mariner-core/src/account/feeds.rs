@@ -14,12 +14,11 @@ use crate::{Result, queries, time};
 /// Title of a feed that has none.
 const UNTITLED: &str = "(No title)";
 
-/// Stores the feed `found` describes, with its tags and current entries.
+/// Stores the feed `found` describes, with its current entries.
 pub(super) async fn subscribe(
     database: &Database,
     found: FoundFeed,
     title: Option<&str>,
-    tag_names: Vec<String>,
 ) -> Result<Feed> {
     let title = title
         .map(str::trim)
@@ -42,7 +41,6 @@ pub(super) async fn subscribe(
                 feeds::INSERT_FEED,
                 params![id, title, url, site_url, feed.itunes_image],
             )?;
-            replace_taggings(&transaction, &id, &tag_names)?;
             articles::store(&transaction, &id, &url, &feed.entries, time::now(), None)?;
             let stored = queries::feed(&transaction, &id)?;
             transaction.commit()?;

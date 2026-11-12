@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mariner_core::{AddFeedResult, Article, ArticleContent, ArticleFilter, ArticleScope, Feed};
+use mariner_core::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice};
 use mariner_feeds::fetch::HttpFetcher;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -16,7 +16,7 @@ use ratatui::widgets::ListState;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-use crate::dialog::{Action, Dialog, Target};
+use crate::dialog::{Action, Button, Dialog, Target};
 use crate::images::Images;
 use crate::reader::{self, LinkRange, Part};
 use crate::{LocalAccount, halfblock, ui};
@@ -84,6 +84,8 @@ pub struct App<'a> {
     pub focus: Pane,
     /// Where each pane was last drawn, for mouse clicks; `None` when hidden.
     pub areas: Areas,
+    /// Where the dialog's buttons were last drawn, for mouse clicks.
+    pub buttons: Vec<(Rect, Button)>,
     pub status: String,
     /// A dialog over the panes, which takes every key while it's open.
     pub dialog: Option<Dialog>,
@@ -96,7 +98,8 @@ pub struct App<'a> {
     /// Opens a URL in the browser; swappable so tests don't.
     opener: Opener,
     refreshing: Option<JoinHandle<mariner_core::Result<()>>>,
-    adding: Option<JoinHandle<mariner_core::Result<AddFeedResult>>>,
+    finding: Option<JoinHandle<mariner_core::Result<Vec<FeedChoice>>>>,
+    subscribing: Option<JoinHandle<mariner_core::Result<Feed>>>,
     quit: bool,
 }
 
@@ -167,6 +170,7 @@ impl<'a> App<'a> {
             true_color: halfblock::true_color_terminal(),
             focus: Pane::Feeds,
             areas: Areas::default(),
+            buttons: Vec::new(),
             status: String::new(),
             dialog: None,
             fetcher,
@@ -174,7 +178,8 @@ impl<'a> App<'a> {
             extracting: HashMap::new(),
             opener: Box::new(open_in_system_browser),
             refreshing: None,
-            adding: None,
+            finding: None,
+            subscribing: None,
             quit: false,
         }
     }
@@ -243,24 +248,8 @@ impl<'a> App<'a> {
             return;
         }
         if let Some(dialog) = &mut self.dialog {
-            match dialog.on_key(key) {
-                Action::None => {}
-                Action::Close => self.dialog = None,
-                Action::Add(url) => self.add_feed(url),
-                Action::Open(url) => {
-                    self.dialog = None;
-                    self.open_url(&url);
-                }
-                Action::Rename(target, name) => self.rename(target, name),
-                Action::Remove(target) => self.remove(target),
-                Action::Move { feed_id, folder } => self.move_feed(feed_id, folder),
-                Action::NewFolder(feed_id) => {
-                    self.dialog = Some(Dialog::NewFolder {
-                        feed_id,
-                        input: String::new(),
-                    })
-                }
-            }
+            let action = dialog.on_key(key);
+            self.act(action);
             return;
         }
         if self.focus == Pane::Feeds {
@@ -295,6 +284,33 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Does what a dialog asked.
+    fn act(&mut self, action: Action) {
+        match action {
+            Action::None => {}
+            Action::Close => self.dialog = None,
+            Action::Find(url) => self.find_feeds(url),
+            Action::Subscribe {
+                url,
+                title,
+                folders,
+            } => self.subscribe(url, title, folders),
+            Action::Open(url) => {
+                self.dialog = None;
+                self.open_url(&url);
+            }
+            Action::Rename(target, name) => self.rename(target, name),
+            Action::Remove(target) => self.remove(target),
+            Action::Move { feed_id, folder } => self.move_feed(feed_id, folder),
+            Action::NewFolder(feed_id) => {
+                self.dialog = Some(Dialog::NewFolder {
+                    feed_id,
+                    input: String::new(),
+                })
+            }
+        }
+    }
+
     /// Notices a finished refresh, add or extraction.
     fn tick(&mut self) {
         let finished: Vec<String> = self
@@ -311,13 +327,25 @@ impl<'a> App<'a> {
             };
             self.extracted(id, result);
         }
-        if self.adding.as_ref().is_some_and(JoinHandle::is_finished) {
-            let handle = self.adding.take().expect("checked");
+        if self.finding.as_ref().is_some_and(JoinHandle::is_finished) {
+            let handle = self.finding.take().expect("checked");
             let result = match self.runtime.block_on(handle) {
                 Ok(result) => result.map_err(|error| error.to_string()),
                 Err(error) => Err(error.to_string()),
             };
-            self.added(result);
+            self.found(result);
+        }
+        if self
+            .subscribing
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            let handle = self.subscribing.take().expect("checked");
+            let result = match self.runtime.block_on(handle) {
+                Ok(result) => result.map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            self.subscribed(result);
         }
         if self
             .refreshing
@@ -334,44 +362,77 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Finds and subscribes to the feeds at `url` in the background.
-    fn add_feed(&mut self, url: String) {
+    /// Finds the feeds at `url` in the background.
+    fn find_feeds(&mut self, url: String) {
         let account = Arc::clone(&self.account);
         let task_url = url.clone();
-        self.adding = Some(
+        self.finding = Some(
             self.runtime
-                .spawn(async move { account.add_feed(&task_url, None, None).await }),
+                .spawn(async move { account.find_feeds(&task_url).await }),
         );
-        self.dialog = Some(Dialog::Adding { url });
+        self.dialog = Some(Dialog::Finding { url });
     }
 
-    /// Shows what adding a feed led to: the new feed selected, a list to
-    /// choose from, or the URL again with what went wrong.
-    fn added(&mut self, result: Result<AddFeedResult, String>) {
-        let url = match &self.dialog {
-            Some(Dialog::Adding { url }) => Some(url.clone()),
-            _ => None,
+    /// Shows the feeds found to pick from, even just one, or the URL again
+    /// with what went wrong.
+    fn found(&mut self, result: Result<Vec<FeedChoice>, String>) {
+        let Some(Dialog::Finding { url }) = &self.dialog else {
+            // Closed while finding.
+            return;
         };
         let retry = |message: &str| Dialog::Add {
-            input: url.clone().unwrap_or_default(),
+            input: url.clone(),
             message: Some(message.to_string()),
         };
+        self.dialog = Some(match result {
+            Ok(choices) if choices.is_empty() => retry("No feed found there."),
+            Ok(choices) => Dialog::choose(choices, self.folder_names()),
+            Err(error) => retry(&error),
+        });
+    }
+
+    /// Every folder, by name.
+    fn folder_names(&self) -> Vec<String> {
+        match self.runtime.block_on(self.account.tags()) {
+            Ok(tags) => tags.into_iter().map(|tag| tag.name).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Subscribes to the feed at `url` in the background, then, as a
+    /// separate change, adds it to `folders`.
+    fn subscribe(&mut self, url: String, title: Option<String>, folders: Vec<String>) {
+        let account = Arc::clone(&self.account);
+        self.subscribing = Some(self.runtime.spawn(async move {
+            let feed = account.subscribe(&url, None).await?;
+            if folders.is_empty() {
+                return Ok(feed);
+            }
+            let mut tags = feed.tag_names.clone();
+            tags.extend(folders);
+            let feed = account.update_feed(&feed, &feed.title, &tags).await?;
+            for folder in &feed.tag_names {
+                account.set_tag_expanded(folder, true).await?;
+            }
+            Ok(feed)
+        }));
+        let title = title.unwrap_or_else(|| "the feed".into());
+        self.dialog = Some(Dialog::Subscribing { title });
+    }
+
+    /// Selects the new feed, under its first folder.
+    fn subscribed(&mut self, result: Result<Feed, String>) {
+        if matches!(self.dialog, Some(Dialog::Subscribing { .. })) {
+            self.dialog = None;
+        }
         match result {
-            Ok(AddFeedResult::Added(feed)) => {
-                self.dialog = None;
-                self.status = format!("Added {}", feed.title);
+            Ok(feed) => {
+                self.status = format!("Subscribed to {}", feed.title);
                 self.reload();
-                self.select_feed(&feed.id, None);
+                self.select_feed(&feed.id, feed.tag_names.first().map(String::as_str));
                 self.focus = Pane::Feeds;
             }
-            Ok(AddFeedResult::Choices(choices)) => self.dialog = Some(Dialog::choose(choices)),
-            Ok(AddFeedResult::NotFound) => self.dialog = Some(retry("No feed found there.")),
-            Err(error) => self.dialog = Some(retry(&error)),
-        }
-        // A dialog closed while adding reports in the status line instead.
-        if url.is_none() && self.dialog.is_some() {
-            self.dialog = None;
-            self.status = "Couldn't add the feed".into();
+            Err(error) => self.status = format!("Couldn't subscribe: {error}"),
         }
     }
 
@@ -988,7 +1049,16 @@ impl<'a> App<'a> {
     }
 
     fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.dialog.is_some() {
+        if let Some(dialog) = &mut self.dialog {
+            let clicked = self.buttons.iter().find(|(area, _)| {
+                area.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+            });
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && let Some(&(_, button)) = clicked
+            {
+                let action = dialog.press(button);
+                self.act(action);
+            }
             return;
         }
         let (column, row) = (mouse.column, mouse.row);
@@ -1275,57 +1345,140 @@ mod tests {
         assert!(!render(&mut app, 100).contains(" Add feed "));
     }
 
+    /// Ticks until background work (finding, subscribing) is done.
+    fn settle(app: &mut App) {
+        for _ in 0..500 {
+            app.tick();
+            if app.finding.is_none() && app.subscribing.is_none() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("background work didn't finish");
+    }
+
+    fn choice(url: &str, title: &str) -> FeedChoice {
+        FeedChoice {
+            url: url.into(),
+            title: Some(title.into()),
+        }
+    }
+
+    /// The seeded feed's URL: subscribing to it again needs no network.
+    const SEEDED: &str = "https://example.com/feed.xml";
+
     #[test]
-    fn shows_what_adding_led_to() {
+    fn always_shows_the_feeds_found_to_pick_from() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
         let mut app = app(&runtime, dir.path());
 
-        app.dialog = Some(Dialog::Adding {
+        app.dialog = Some(Dialog::Finding {
             url: "https://example.org".into(),
         });
-        app.added(Ok(AddFeedResult::NotFound));
+        app.found(Ok(Vec::new()));
         let screen = render(&mut app, 100);
         assert!(
             screen.contains("No feed found there.") && screen.contains("URL: https://example.org"),
             "{screen}"
         );
 
-        app.dialog = Some(Dialog::Adding {
+        app.dialog = Some(Dialog::Finding {
             url: "https://example.org".into(),
         });
-        let choice = |url: &str, title: &str| mariner_core::FeedChoice {
-            url: url.into(),
-            title: Some(title.into()),
-        };
-        app.added(Ok(AddFeedResult::Choices(vec![
-            choice("https://example.org/posts.xml", "Posts"),
-            choice("https://example.org/comments.xml", "Comments"),
-        ])));
-        press(&mut app, KeyCode::Char('j'));
+        app.found(Ok(vec![choice("https://example.org/posts.xml", "Posts")]));
+        let screen = render(&mut app, 100);
+        if std::env::var_os("MARINER_PRINT_UI").is_some() {
+            println!("{screen}");
+        }
+        assert!(
+            screen.contains("Posts")
+                && screen.contains("[ Add to Folder ]")
+                && screen.contains("[ Subscribe ]"),
+            "one feed still shows the selector: {screen}"
+        );
+    }
+
+    #[test]
+    fn subscribes_then_adds_to_the_folders_checked() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.dialog = Some(Dialog::choose(
+            vec![choice(SEEDED, "Example Feed")],
+            Vec::new(),
+        ));
+
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Enter);
         let screen = render(&mut app, 100);
         assert!(
-            screen.contains("Posts") && screen.contains("Comments"),
+            screen.contains(" Add to Folder ") && screen.contains("New folder…"),
             "{screen}"
         );
-        let Some(Dialog::Choose { list, .. }) = &app.dialog else {
-            panic!("expected choices");
-        };
-        assert_eq!(list.selected(), Some(1));
 
-        app.dialog = Some(Dialog::Adding {
-            url: "https://example.com/feed.xml".into(),
-        });
-        let feed = app.feeds[0].clone();
-        app.feed_list.select(Some(0));
-        app.added(Ok(AddFeedResult::Added(feed)));
-        assert!(app.dialog.is_none());
-        assert_eq!(
-            app.feed_list.selected(),
-            Some(1),
-            "the new feed is selected"
+        press(&mut app, KeyCode::Char(' '));
+        type_text(&mut app, "News");
+        press(&mut app, KeyCode::Enter);
+        let screen = render(&mut app, 100);
+        if std::env::var_os("MARINER_PRINT_UI").is_some() {
+            println!("{screen}");
+        }
+        assert!(screen.contains("[x] News"), "{screen}");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(
+            matches!(app.dialog, Some(Dialog::Choose { folders: None, .. })),
+            "Esc goes back to the feeds"
         );
-        assert_eq!(app.status, "Added Example Feed");
+        press(&mut app, KeyCode::Enter);
+        let Some(Dialog::Choose {
+            folders: Some(picker),
+            ..
+        }) = &mut app.dialog
+        else {
+            panic!("Add to Folder is still focused");
+        };
+        picker.folders.push(("News".into(), true));
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.dialog, Some(Dialog::Subscribing { .. })));
+
+        settle(&mut app);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.status, "Subscribed to Example Feed");
+        assert_eq!(app.feeds[0].tag_names, ["News"]);
+        assert!(app.expanded.contains("News"), "the folder opens");
+        assert_eq!(
+            app.selected_row(),
+            &Row::Feed {
+                id: "f".into(),
+                folder: Some("News".into())
+            }
+        );
+    }
+
+    #[test]
+    fn subscribe_without_folders_and_by_clicking() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        app.dialog = Some(Dialog::choose(
+            vec![choice(SEEDED, "Example Feed")],
+            Vec::new(),
+        ));
+
+        render(&mut app, 100);
+        let (area, _) = *app
+            .buttons
+            .iter()
+            .find(|(_, button)| *button == Button::Subscribe)
+            .expect("a Subscribe button");
+        click(&mut app, area.x + 1, area.y);
+        assert!(matches!(app.dialog, Some(Dialog::Subscribing { .. })));
+
+        settle(&mut app);
+        assert_eq!(app.status, "Subscribed to Example Feed");
+        assert!(app.feeds[0].tag_names.is_empty(), "no folders");
     }
 
     /// Makes `app` record the URLs it opens instead of opening them.

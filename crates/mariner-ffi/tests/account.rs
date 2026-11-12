@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use futures_executor::block_on;
 use mariner_ffi::{
-    Account, AddFeedResult, ArticleFilter, ArticleScope, HttpClient, HttpError, HttpHeader,
-    HttpRequest, HttpResponse, MarinerError,
+    Account, ArticleFilter, ArticleScope, HttpClient, HttpError, HttpHeader, HttpRequest,
+    HttpResponse, MarinerError,
 };
 
 const FEED: &str = r#"<rss version="2.0"><channel><title>Example</title>
@@ -80,10 +80,13 @@ fn adds_a_feed_through_a_redirect_and_lists_its_articles() {
         );
     let (_dir, account, stub) = open(stub);
 
-    let result = block_on(account.add_feed("http://example.com/feed".into(), None, None)).unwrap();
-    let AddFeedResult::Added { feed } = result else {
-        panic!("expected a feed, got {result:?}");
-    };
+    let choices = block_on(account.find_feeds("http://example.com/feed".into())).unwrap();
+    assert_eq!(choices.len(), 1);
+    assert!(
+        block_on(account.feeds()).unwrap().is_empty(),
+        "finding isn't subscribing"
+    );
+    let feed = block_on(account.subscribe(choices[0].url.clone(), None)).unwrap();
     assert_eq!(feed.title, "Example");
     assert_eq!(
         stub.requests.lock().unwrap()[..2],
@@ -105,7 +108,7 @@ fn adds_a_feed_through_a_redirect_and_lists_its_articles() {
 #[test]
 fn reports_the_apps_network_errors() {
     let (_dir, account, _) = open(Stub::default());
-    let error = block_on(account.add_feed("https://offline.example/".into(), None, None))
+    let error = block_on(account.find_feeds("https://offline.example/".into()))
         .expect_err("nothing answers");
     assert!(
         matches!(&error, MarinerError::Network { reason } if reason.contains("no route")),

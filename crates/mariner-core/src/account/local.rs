@@ -7,8 +7,8 @@ use mariner_feeds::finder::{self, FoundFeed};
 use chrono::{DateTime, Utc};
 
 use super::{Account, AccountDelegate, Status};
-use crate::Result;
-use crate::model::{AddFeedResult, Feed, FeedChoice};
+use crate::model::{Feed, FeedChoice};
+use crate::{Error, Result};
 
 mod crawl_data;
 mod redirect_cache;
@@ -27,23 +27,28 @@ impl<F> LocalAccountDelegate<F> {
 }
 
 impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
-    /// Finds the feeds `url` leads to: one is subscribed to, several are
-    /// offered as choices.
-    async fn add_feed(
+    async fn find_feeds(&self, _: &Account<F>, url: &str) -> Result<Vec<FeedChoice>> {
+        let found = finder::find(&self.fetcher, url).await?;
+        Ok(found.into_iter().map(choice).collect())
+    }
+
+    /// Fetches the feed at `url` and stores it. A page that leads to one
+    /// feed subscribes to that feed.
+    async fn subscribe(
         &self,
         account: &Account<F>,
         url: &str,
         title: Option<&str>,
-        tag_names: &[String],
-    ) -> Result<AddFeedResult> {
+    ) -> Result<Feed> {
         let mut found = finder::find(&self.fetcher, url).await?;
-        match found.len() {
-            0 => Ok(AddFeedResult::NotFound),
-            1 => account.subscribe(found.remove(0), title, tag_names).await,
-            _ => Ok(AddFeedResult::Choices(
-                found.into_iter().map(choice).collect(),
-            )),
-        }
+        let index = found
+            .iter()
+            .position(|feed| feed.url == url)
+            .or((found.len() == 1).then_some(0))
+            .ok_or_else(|| Error::NoFeed {
+                url: url.to_string(),
+            })?;
+        account.store_feed(found.swap_remove(index), title).await
     }
 
     /// Fetches every feed that isn't backing off. Read articles that left
