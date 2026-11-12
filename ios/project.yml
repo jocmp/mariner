@@ -28,6 +28,12 @@ targets:
     info:
       path: Mariner/Info.plist
       properties:
+        # Feeds, their pages and images are often still plain http, so a
+        # reader has to load them, as NetNewsWire does. Core tries https
+        # first for every http URL, so this only matters for http-only
+        # sites.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
         # OPML, for importing and exporting subscription lists.
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: org.opml.opml
