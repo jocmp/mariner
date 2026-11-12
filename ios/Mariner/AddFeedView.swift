@@ -42,7 +42,7 @@ struct AddFeedView: View {
             }
         }
         .sheet(isPresented: $isChoosingFolders) {
-            FolderPickerView { folders in
+            FolderPickerView(title: "Add to Folder", confirmTitle: "Subscribe") { folders in
                 subscribe(to: folders)
             }
         }
@@ -127,79 +127,5 @@ struct AddFeedView: View {
                 message = String(describing: error)
             }
         }
-    }
-}
-
-/// Folders to put the new feed in: any of the existing ones, and a new one
-/// to name.
-private struct FolderPickerView: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    let subscribe: ([String]) -> Void
-
-    @State private var folders: [String] = []
-    @State private var checked: Set<String> = []
-    @State private var newFolder = ""
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach(folders, id: \.self) { folder in
-                        Button {
-                            toggle(folder)
-                        } label: {
-                            Label(folder, systemImage: checked.contains(folder) ? "checkmark.circle.fill" : "circle")
-                        }
-                        .tint(.primary)
-                    }
-                }
-                Section("New Folder") {
-                    HStack {
-                        TextField("Name", text: $newFolder)
-                            .onSubmit(addNewFolder)
-                        Button("Add", action: addNewFolder)
-                            .disabled(newFolder.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-            }
-            .navigationTitle("Add to Folder")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Back", role: .cancel) { dismiss() }
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
-                Button("Subscribe") {
-                    addNewFolder()
-                    subscribe(folders.filter(checked.contains))
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
-                .padding()
-            }
-            .task { folders = await model.folderNames() }
-        }
-    }
-
-    private func toggle(_ folder: String) {
-        if checked.contains(folder) {
-            checked.remove(folder)
-        } else {
-            checked.insert(folder)
-        }
-    }
-
-    /// Adds the typed folder to the list, checked.
-    private func addNewFolder() {
-        let name = newFolder.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        if !folders.contains(name) {
-            folders.append(name)
-        }
-        checked.insert(name)
-        newFolder = ""
     }
 }

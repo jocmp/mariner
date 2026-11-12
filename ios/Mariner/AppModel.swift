@@ -117,6 +117,73 @@ final class AppModel {
         await loadArticles()
     }
 
+    func renameFeed(id: String, to title: String) async {
+        guard let account, let feed = feed(id: id) else { return }
+        do {
+            _ = try await account.updateFeed(feed: feed, title: title, tagNames: feed.tagNames)
+        } catch {
+            show(error)
+        }
+        await reload()
+    }
+
+    /// Puts a feed in exactly `folders`, opening them so it shows. Folders it
+    /// leaves empty go.
+    func moveFeed(id: String, to folders: [String]) async {
+        guard let account, let feed = feed(id: id) else { return }
+        do {
+            _ = try await account.updateFeed(feed: feed, title: feed.title, tagNames: folders)
+            for folder in folders {
+                try await account.setTagExpanded(name: folder, expanded: true)
+            }
+        } catch {
+            show(error)
+        }
+        await reload()
+    }
+
+    /// Unsubscribes, deleting its articles and any folder it leaves empty.
+    func removeFeed(id: String) async {
+        guard let account, let feed = feed(id: id) else { return }
+        do {
+            try await account.removeFeed(feed: feed)
+        } catch {
+            show(error)
+        }
+        if selection == .feed(id) {
+            selection = .all
+        }
+        await reload()
+    }
+
+    /// Renames a folder, merging it into one of the same name.
+    func renameFolder(_ name: String, to newName: String) async {
+        guard let account else { return }
+        do {
+            try await account.updateTag(oldName: name, newName: newName)
+        } catch {
+            show(error)
+        }
+        if selection == .folder(name) {
+            selection = .folder(newName)
+        }
+        await reload()
+    }
+
+    /// Removes a folder; its feeds stay.
+    func removeFolder(_ name: String) async {
+        guard let account else { return }
+        do {
+            try await account.removeTag(name: name)
+        } catch {
+            show(error)
+        }
+        if selection == .folder(name) {
+            selection = .all
+        }
+        await reload()
+    }
+
     func feed(id: String) -> Feed? {
         feeds.first { $0.id == id }
     }
