@@ -163,7 +163,8 @@ impl<F: Fetch + Send + Sync> Account<F> {
         feeds::set_tag_expanded(&self.database, name, expanded).await
     }
 
-    /// Unsubscribes, deleting the feed's articles, starred ones included.
+    /// Unsubscribes, deleting the feed's articles, starred ones included,
+    /// and any of its folders that no other feed is in.
     pub async fn remove_feed(&self, feed: &Feed) -> Result<()> {
         self.delegate.remove_feed(self, feed).await?;
         feeds::remove(&self.database, &feed.id).await

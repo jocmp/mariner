@@ -173,7 +173,7 @@ fn article_row(row: &Row) -> rusqlite::Result<Article> {
     })
 }
 
-fn tag_names(connection: &Connection, feed_id: &str) -> rusqlite::Result<Vec<String>> {
+pub(crate) fn tag_names(connection: &Connection, feed_id: &str) -> rusqlite::Result<Vec<String>> {
     connection
         .prepare_cached(tags::SELECT_FEED_TAG_NAMES)?
         .query_map(params![feed_id], |row| row.get(0))?

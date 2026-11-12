@@ -31,3 +31,9 @@ INSERT OR IGNORE INTO tags (name, expanded) SELECT ?2, expanded FROM tags WHERE 
 
 -- name: delete_tag
 DELETE FROM tags WHERE name = ?1;
+
+-- name: delete_tags_without_feeds
+-- Of the tags named in ?1 (a JSON array), deletes those no feed has.
+DELETE FROM tags
+WHERE name IN (SELECT value FROM json_each(?1))
+  AND NOT EXISTS (SELECT 1 FROM taggings WHERE taggings.name = tags.name);

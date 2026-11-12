@@ -350,3 +350,36 @@ async fn status_count(account: &Account<Network>) -> i64 {
         .await
         .unwrap()
 }
+
+#[test]
+fn removing_a_folders_last_feed_removes_the_folder() {
+    block_on(async {
+        let other = "https://example.com/other.xml";
+        let stub = Network::default().with(FEED_URL, RSS).with(other, RSS);
+        let (_dir, account) = local_account(&stub).await;
+        let first = account.subscribe(FEED_URL, None).await.unwrap();
+        let first = account
+            .update_feed(
+                &first,
+                &first.title,
+                &["Solo".to_string(), "Shared".to_string()],
+            )
+            .await
+            .unwrap();
+        let second = account.subscribe(other, None).await.unwrap();
+        account
+            .update_feed(&second, &second.title, &["Shared".to_string()])
+            .await
+            .unwrap();
+
+        account.remove_feed(&first).await.unwrap();
+        let tags: Vec<String> = account
+            .tags()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|tag| tag.name)
+            .collect();
+        assert_eq!(tags, ["Shared"], "Solo had no other feed");
+    });
+}

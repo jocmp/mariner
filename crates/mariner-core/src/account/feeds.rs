@@ -120,16 +120,19 @@ pub(super) async fn rename_tag(database: &Database, old_name: &str, new_name: &s
     Ok(())
 }
 
-/// Deletes the feed with its articles and their statuses. Unsubscribing
-/// isn't pruning: without the statuses, re-adding the feed brings its
-/// articles back unread.
+/// Deletes the feed with its articles and their statuses, and any of its
+/// folders that no other feed is in. Unsubscribing isn't pruning: without
+/// the statuses, re-adding the feed brings its articles back unread.
 pub(super) async fn remove(database: &Database, id: &str) -> Result<()> {
     let id = id.to_string();
     database
         .write(move |connection| {
             let transaction = connection.transaction()?;
+            let tag_names = queries::tag_names(&transaction, &id)?;
             transaction.execute(feeds::DELETE_FEED_STATUSES, [&id])?;
             transaction.execute(feeds::DELETE_FEED, [&id])?;
+            let tag_names = serde_json::to_string(&tag_names).expect("strings serialize");
+            transaction.execute(tags::DELETE_TAGS_WITHOUT_FEEDS, [tag_names])?;
             transaction.commit()
         })
         .await?;
