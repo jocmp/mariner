@@ -67,7 +67,7 @@ fn open(stub: Stub) -> (tempfile::TempDir, Arc<Account>, Arc<Stub>) {
 fn adds_a_feed_through_a_redirect_and_lists_its_articles() {
     let stub = Stub::default()
         .with(
-            "http://example.com/feed",
+            "https://example.com/old",
             301,
             &[("Location", "https://example.com/feed")],
             "",
@@ -80,7 +80,7 @@ fn adds_a_feed_through_a_redirect_and_lists_its_articles() {
         );
     let (_dir, account, stub) = open(stub);
 
-    let choices = block_on(account.find_feeds("http://example.com/feed".into())).unwrap();
+    let choices = block_on(account.find_feeds("https://example.com/old".into())).unwrap();
     assert_eq!(choices.len(), 1);
     assert!(
         block_on(account.feeds()).unwrap().is_empty(),
@@ -90,7 +90,7 @@ fn adds_a_feed_through_a_redirect_and_lists_its_articles() {
     assert_eq!(feed.title, "Example");
     assert_eq!(
         stub.requests.lock().unwrap()[..2],
-        ["http://example.com/feed", "https://example.com/feed"],
+        ["https://example.com/old", "https://example.com/feed"],
         "the app sends each hop; core follows the redirect"
     );
 

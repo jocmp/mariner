@@ -23,22 +23,24 @@ const MAX_REDIRECTS: usize = 10;
 /// Fetches `request` with `send`, which makes one request without following
 /// redirects, following each redirect itself and recording it. This is
 /// [`Fetch`] for HTTP clients that make one request at a time.
+///
+/// An `http` URL is tried over `https` first, and over `http` when `https`
+/// can't connect or answers with an error. A server that sends a request
+/// from `https` to `http` on the same host gets the `http` request it asked
+/// for.
 pub async fn follow_redirects<S, F>(request: &Request, mut send: S) -> Result<Response, FetchError>
 where
     S: FnMut(Request) -> F,
     F: Future<Output = Result<Response, FetchError>>,
 {
     let mut url = Url::parse(&request.url).map_err(|e| FetchError::Request(e.to_string()))?;
+    let mut upgrade = true;
     let mut redirects = Vec::new();
     loop {
-        let hop = Request {
-            url: url.to_string(),
-            headers: request.headers.clone(),
-        };
-        let mut response = send(hop).await?;
+        let (fetched, mut response) = send_hop(&mut send, &url, &request.headers, upgrade).await?;
         let next = response
             .header("location")
-            .and_then(|location| url.join(location).ok());
+            .and_then(|location| fetched.join(location).ok());
         match next {
             Some(next) if (300..400).contains(&response.status) => {
                 if redirects.len() == MAX_REDIRECTS {
@@ -46,20 +48,57 @@ where
                         "more than {MAX_REDIRECTS} redirects"
                     )));
                 }
+                upgrade = !(fetched.scheme() == "https"
+                    && next.scheme() == "http"
+                    && fetched.host() == next.host());
                 redirects.push(Redirect {
                     status: response.status,
-                    from: url.to_string(),
+                    from: fetched.to_string(),
                     to: next.to_string(),
                 });
                 url = next;
             }
             _ => {
-                response.url = url.to_string();
+                response.url = fetched.to_string();
                 response.redirects = redirects;
                 return Ok(response);
             }
         }
     }
+}
+
+/// Sends one request for `url`, over `https` first when it's `http` and
+/// `upgrade` allows. Returns the URL that answered, with its response.
+async fn send_hop<S, F>(
+    send: &mut S,
+    url: &Url,
+    headers: &[(String, String)],
+    upgrade: bool,
+) -> Result<(Url, Response), FetchError>
+where
+    S: FnMut(Request) -> F,
+    F: Future<Output = Result<Response, FetchError>>,
+{
+    let get = |url: &Url| Request {
+        url: url.to_string(),
+        headers: headers.to_vec(),
+    };
+    if upgrade
+        && url.scheme() == "http"
+        && url.port().is_none()
+        && let Some(https) = with_https(url)
+        && let Ok(response) = send(get(&https)).await
+        && response.status < 400
+    {
+        return Ok((https, response));
+    }
+    Ok((url.clone(), send(get(url)).await?))
+}
+
+fn with_https(url: &Url) -> Option<Url> {
+    let mut https = url.clone();
+    https.set_scheme("https").ok()?;
+    Some(https)
 }
 
 /// A GET request.
