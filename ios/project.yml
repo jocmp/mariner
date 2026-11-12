@@ -1,0 +1,44 @@
+name: Mariner
+options:
+  bundleIdPrefix: com.jocmp
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  MarinerKit:
+    path: MarinerKit
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MARKETING_VERSION: "2026.11.1001"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  # Not `Mariner`, which is the bindings' module and package product.
+  MarinerApp:
+    type: application
+    platform: iOS
+    sources:
+      - Mariner
+    dependencies:
+      - package: MarinerKit
+        product: Mariner
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_NAME: Mariner
+        PRODUCT_BUNDLE_IDENTIFIER: com.jocmp.mariner
+        PRODUCT_MODULE_NAME: MarinerApp
+        # The core is built for Apple silicon simulators only.
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Mariner
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: >-
+          UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+          UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: >-
+          UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft
+          UIInterfaceOrientationLandscapeRight
