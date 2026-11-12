@@ -48,8 +48,17 @@ fn adds_a_feed_with_its_articles() {
             feed.itunes_image_url.as_deref(),
             Some("https://example.com/cover.jpg")
         );
+        assert_eq!(
+            feed.favicon_url.as_deref(),
+            Some("https://example.com/favicon.ico"),
+            "the site has no page, so its icon is the usual place"
+        );
         assert_eq!(account.feeds().await.unwrap(), std::slice::from_ref(&feed));
-        assert_eq!(network.requested_urls(), [FEED_URL]);
+        assert_eq!(
+            network.requested_urls(),
+            [FEED_URL, "https://example.com/"],
+            "the feed, then its site for an icon"
+        );
 
         let articles = articles(&account).await;
         let first = mariner_feeds::Entry {
@@ -114,9 +123,10 @@ fn finds_an_existing_feed_without_fetching() {
         let network = Network::default().with(FEED_URL, RSS);
         let (_dir, account) = local_account(&network).await;
         let first = account.subscribe(FEED_URL, None).await.unwrap();
+        network.clear_requests();
         let again = account.subscribe(FEED_URL, Some("Other")).await.unwrap();
         assert_eq!(first, again);
-        assert_eq!(network.requested_urls(), [FEED_URL]);
+        assert!(network.requested_urls().is_empty());
     });
 }
 
@@ -415,5 +425,36 @@ fn moving_a_folders_last_feed_out_removes_the_folder() {
             .map(|tag| tag.name)
             .collect();
         assert_eq!(tags, ["Renamed"], "renaming leaves no empty folder either");
+    });
+}
+
+#[test]
+fn takes_an_icon_from_the_feed_or_its_site() {
+    block_on(async {
+        let atom = r#"<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom</title>
+            <icon>https://cdn.example.com/icon.png</icon>
+            <link rel="alternate" href="https://atom.example.com/"/></feed>"#;
+        let site = r#"<link rel="apple-touch-icon" href="/touch.png">"#;
+        let network = Network::default()
+            .with("https://atom.example.com/feed", atom)
+            .with(FEED_URL, RSS)
+            .with("https://example.com/", site);
+        let (_dir, account) = local_account(&network).await;
+
+        let atom = account
+            .subscribe("https://atom.example.com/feed", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            atom.favicon_url.as_deref(),
+            Some("https://cdn.example.com/icon.png"),
+            "the feed's own icon"
+        );
+        let rss = account.subscribe(FEED_URL, None).await.unwrap();
+        assert_eq!(
+            rss.favicon_url.as_deref(),
+            Some("https://example.com/touch.png"),
+            "the site's icon"
+        );
     });
 }

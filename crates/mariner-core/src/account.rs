@@ -177,6 +177,16 @@ impl<F: Fetch + Send + Sync> Account<F> {
         feeds::remove_tag(&self.database, name).await
     }
 
+    /// Stores a feed's icon, found by the delegate.
+    pub(crate) async fn set_favicon(&self, feed_id: &str, url: &str) -> Result<()> {
+        feeds::set_favicon(&self.database, feed_id, url).await
+    }
+
+    /// Feeds whose icon was never looked for, as (id, site URL).
+    pub(crate) async fn feeds_without_favicons(&self) -> Result<Vec<(String, String)>> {
+        feeds::without_favicons(&self.database).await
+    }
+
     /// Stores a feed the delegate subscribed to, with its current entries.
     /// One stored already (under the URL it redirected to) is returned as is.
     pub(crate) async fn store_feed(&self, found: FoundFeed, title: Option<&str>) -> Result<Feed> {

@@ -3,6 +3,7 @@
 
 mod date;
 mod decode;
+pub mod favicon;
 pub mod fetch;
 pub mod finder;
 mod json_feed;

@@ -443,3 +443,27 @@ fn takes_the_feeds_new_title_and_site() {
         assert_eq!(feed.site_url.as_deref(), Some("https://example.org/"));
     });
 }
+
+#[test]
+fn finds_icons_for_feeds_that_have_none() {
+    block_on(async {
+        let network = Network::default().with(FEED_URL, &rss(&["1"])).with(
+            "https://example.com/",
+            r#"<link rel="icon" href="/icon.png" sizes="64x64">"#,
+        );
+        let (_dir, account) = local_account(&network).await;
+        account.subscribe(FEED_URL, None).await.unwrap();
+        account
+            .database()
+            .write(|connection| connection.execute("UPDATE feeds SET favicon_url = NULL", []))
+            .await
+            .unwrap();
+
+        account.refresh(None).await.unwrap();
+        let feed = &account.feeds().await.unwrap()[0];
+        assert_eq!(
+            feed.favicon_url.as_deref(),
+            Some("https://example.com/icon.png")
+        );
+    });
+}

@@ -1,6 +1,8 @@
 //! The delegate of an account that lives only on this device: it finds and
 //! fetches feeds itself, and has nothing to tell a service about changes.
 
+use futures_util::stream::{self, StreamExt};
+use mariner_feeds::favicon;
 use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::{self, FoundFeed};
 
@@ -32,8 +34,8 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
         Ok(found.into_iter().map(choice).collect())
     }
 
-    /// Fetches the feed at `url` and stores it. A page that leads to one
-    /// feed subscribes to that feed.
+    /// Fetches the feed at `url` and stores it with its icon. A page that
+    /// leads to one feed subscribes to that feed.
     async fn subscribe(
         &self,
         account: &Account<F>,
@@ -48,7 +50,24 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
             .ok_or_else(|| Error::NoFeed {
                 url: url.to_string(),
             })?;
-        account.store_feed(found.swap_remove(index), title).await
+        let found = found.swap_remove(index);
+        let own_icon = found
+            .feed
+            .icon
+            .clone()
+            .filter(|icon| icon.starts_with("http"));
+        let mut feed = account.store_feed(found, title).await?;
+        if feed.favicon_url.is_none() {
+            let icon = match own_icon {
+                Some(icon) => Some(icon),
+                None => self.find_favicon(feed.site_url.as_deref()).await,
+            };
+            if let Some(icon) = icon {
+                account.set_favicon(&feed.id, &icon).await?;
+                feed.favicon_url = Some(icon);
+            }
+        }
+        Ok(feed)
     }
 
     /// Fetches every feed that isn't backing off. Read articles that left
@@ -57,7 +76,8 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
         let cutoff = cutoff.map(|cutoff| cutoff.timestamp());
         LocalAccountRefresher::new(&self.fetcher)
             .refresh(account, cutoff)
-            .await
+            .await?;
+        self.find_missing_favicons(account).await
     }
 
     async fn set_status(&self, _: &Account<F>, _: &[String], _: Status) -> Result<()> {
@@ -77,6 +97,34 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
     }
 
     async fn remove_tag(&self, _: &Account<F>, _: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Icons looked for at once.
+const FAVICON_CONCURRENCY: usize = 6;
+
+impl<F: Fetch + Send + Sync> LocalAccountDelegate<F> {
+    async fn find_favicon(&self, site_url: Option<&str>) -> Option<String> {
+        favicon::find(&self.fetcher, site_url?).await
+    }
+
+    /// Looks for the icons of feeds that have none yet, such as those
+    /// subscribed before icons were looked for.
+    async fn find_missing_favicons(&self, account: &Account<F>) -> Result<()> {
+        let missing = account.feeds_without_favicons().await?;
+        let found: Vec<(String, Option<String>)> = stream::iter(missing)
+            .map(
+                |(id, site_url)| async move { (id, favicon::find(&self.fetcher, &site_url).await) },
+            )
+            .buffer_unordered(FAVICON_CONCURRENCY)
+            .collect()
+            .await;
+        for (id, icon) in found {
+            if let Some(icon) = icon {
+                account.set_favicon(&id, &icon).await?;
+            }
+        }
         Ok(())
     }
 }

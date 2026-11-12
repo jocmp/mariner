@@ -27,6 +27,13 @@ UPDATE feeds SET title = ?2 WHERE id = ?1;
 UPDATE feeds SET title = COALESCE(?2, title), site_url = COALESCE(?3, site_url)
 WHERE id = ?1;
 
+-- name: update_feed_favicon
+UPDATE feeds SET favicon_url = ?2 WHERE id = ?1;
+
+-- name: select_feeds_without_favicons
+-- Feeds whose icon was never looked for, with the site to look on.
+SELECT id, site_url FROM feeds WHERE favicon_url IS NULL AND site_url IS NOT NULL;
+
 -- name: update_feed_sticky_full_content
 UPDATE feeds SET enable_sticky_full_content = ?2 WHERE id = ?1;
 

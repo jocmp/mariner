@@ -106,6 +106,30 @@ pub(super) async fn set_tag_expanded(
     Ok(())
 }
 
+pub(super) async fn set_favicon(database: &Database, id: &str, url: &str) -> Result<()> {
+    let (id, url) = (id.to_string(), url.to_string());
+    database
+        .write(move |connection| {
+            connection
+                .prepare_cached(feeds::UPDATE_FEED_FAVICON)?
+                .execute(params![id, url])
+        })
+        .await?;
+    Ok(())
+}
+
+/// Feeds whose icon was never looked for, as (id, site URL).
+pub(super) async fn without_favicons(database: &Database) -> Result<Vec<(String, String)>> {
+    Ok(database
+        .read(|connection| {
+            connection
+                .prepare_cached(feeds::SELECT_FEEDS_WITHOUT_FAVICONS)?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect()
+        })
+        .await?)
+}
+
 /// Renames a tag on every feed. A feed that already has the new tag keeps
 /// one tagging.
 pub(super) async fn rename_tag(database: &Database, old_name: &str, new_name: &str) -> Result<()> {
