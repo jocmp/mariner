@@ -83,12 +83,7 @@ private struct ImageBlockView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let source = block.bestSource(width: width, scale: displayScale),
                let url = URL(string: source.url) {
-                ArticleImage(
-                    url: url,
-                    knownAspectRatio: source.aspectRatio,
-                    naturalWidth: source.naturalWidth
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ArticleImage(url: url, knownAspectRatio: source.aspectRatio)
                 .onTapGesture {
                     if let link = block.link.flatMap(URL.init(string:)) {
                         openURL(link)
@@ -275,12 +270,6 @@ extension ImageSource {
     var aspectRatio: CGFloat? {
         guard let width, let height, width > 0, height > 0 else { return nil }
         return CGFloat(width) / CGFloat(height)
-    }
-
-    /// How wide it's meant to show, in points, from its `width` attribute,
-    /// as a browser would: an image is never stretched past it.
-    var naturalWidth: CGFloat? {
-        width.map { CGFloat($0) }
     }
 
     /// Its size relative to what's needed: 1 is just right.

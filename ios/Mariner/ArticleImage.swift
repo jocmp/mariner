@@ -2,24 +2,21 @@ import Nuke
 import NukeUI
 import SwiftUI
 
-/// An image in an article. Its box takes the image's shape before it loads,
-/// from the HTML's size or the shape remembered from an earlier load, so
-/// the article doesn't jump; it isn't stretched past its natural width; and
-/// GIFs animate.
+/// An image in an article, as wide as the column at its own shape. Its box
+/// takes that shape before it loads, from the HTML's size or the shape
+/// remembered from an earlier load, so the article doesn't jump. GIFs
+/// animate.
 struct ArticleImage: View {
     let url: URL
     /// From the HTML's `width` and `height`, when it gave both.
     var knownAspectRatio: CGFloat?
-    /// The widest it should show, in points, when known before it loads.
-    var naturalWidth: CGFloat?
 
     @State private var failed = false
     private let aspectRatios = AspectRatios.shared
 
-    init(url: URL, knownAspectRatio: CGFloat? = nil, naturalWidth: CGFloat? = nil) {
+    init(url: URL, knownAspectRatio: CGFloat? = nil) {
         self.url = url
         self.knownAspectRatio = knownAspectRatio
-        self.naturalWidth = naturalWidth
     }
 
     var body: some View {
@@ -31,7 +28,7 @@ struct ArticleImage: View {
                     Rectangle()
                         .fill(.fill.tertiary)
                         .aspectRatio(placeholderAspectRatio, contentMode: .fit)
-                        .frame(maxWidth: naturalWidth ?? .infinity)
+                        .frame(maxWidth: .infinity)
                 }
             }
             .onCompletion { result in
@@ -58,7 +55,7 @@ struct ArticleImage: View {
             }
         }
         .aspectRatio(ratio, contentMode: .fit)
-        .frame(maxWidth: naturalWidth ?? size.width)
+        .frame(maxWidth: .infinity)
     }
 
     /// The HTML's shape, else one remembered, else a common photo shape.
