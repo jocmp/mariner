@@ -36,9 +36,7 @@ struct ReaderView: View {
                     if let document = shownDocument {
                         BlocksView(blocks: document.blocks)
                     } else {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 32)
+                        SlowLoadingIndicator()
                     }
                 }
                 .padding()
@@ -185,5 +183,26 @@ struct ReaderView: View {
         return await Task.detached(priority: .userInitiated) {
             try? condense(html: html, baseUrl: base)
         }.value
+    }
+}
+
+/// A spinner that shows only once loading has taken a while: 3 seconds.
+/// Before that the space stays empty, so a quick load doesn't flash one.
+private struct SlowLoadingIndicator: View {
+    @State private var isSlow = false
+
+    var body: some View {
+        ZStack {
+            if isSlow {
+                ProgressView()
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 32)
+        .task {
+            try? await Task.sleep(for: .seconds(3))
+            withAnimation { isSlow = true }
+        }
     }
 }
