@@ -89,15 +89,32 @@ final class AppModel {
         await reload()
     }
 
-    func addFeed(url: String) async throws -> AddFeedResult {
-        guard let account else { return .notFound }
-        let result = try await account.addFeed(url: url, title: nil, tagNames: nil)
-        if case .added(let feed) = result {
-            await reload()
-            selection = .feed(feed.id)
-            await loadArticles()
+    /// The feeds `url` leads to, to pick one from. Subscribes to nothing.
+    func findFeeds(url: String) async throws -> [FeedChoice] {
+        guard let account else { return [] }
+        return try await account.findFeeds(url: url)
+    }
+
+    /// Every folder's name, for adding a new feed to.
+    func folderNames() async -> [String] {
+        (try? await account?.tags().map(\.name)) ?? []
+    }
+
+    /// Subscribes to the feed at `url`, then, as its own change, adds it to
+    /// `folders`, opening them so the feed shows.
+    func subscribe(url: String, folders: [String]) async throws {
+        guard let account else { return }
+        var feed = try await account.subscribe(url: url, title: nil)
+        if !folders.isEmpty {
+            let tags = Array(Set(feed.tagNames).union(folders)).sorted()
+            feed = try await account.updateFeed(feed: feed, title: feed.title, tagNames: tags)
+            for folder in folders {
+                try await account.setTagExpanded(name: folder, expanded: true)
+            }
         }
-        return result
+        await reload()
+        selection = .feed(feed.id)
+        await loadArticles()
     }
 
     func feed(id: String) -> Feed? {

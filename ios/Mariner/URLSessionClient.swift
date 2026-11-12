@@ -46,16 +46,16 @@ nonisolated final class URLSessionClient: HttpClient {
     }
 }
 
-/// Stops at each redirect, so the response goes back to core. (The
-/// completion-handler form: Swift 6.4's compiler crashes on the async one.)
+/// Stops at each redirect, so the response goes back to core. URLSession
+/// calls it on its own queue, not an actor, hence `@concurrent`.
 private nonisolated final class StopAtRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    @concurrent
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) {
-        completionHandler(nil)
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        nil
     }
 }
