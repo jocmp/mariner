@@ -75,26 +75,20 @@ private struct TextBlockView: View {
 
 private struct ImageBlockView: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.displayScale) private var displayScale
     let block: ImageBlock
+    @State private var width: CGFloat = ReaderLayout.maxWidth
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let url = block.bestSource.flatMap({ URL(string: $0.url) }) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(.rect(cornerRadius: 8))
-                    case .failure:
-                        EmptyView()
-                    default:
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.fill.tertiary)
-                            .aspectRatio(block.aspectRatio ?? 16 / 9, contentMode: .fit)
-                    }
-                }
+            if let source = block.bestSource(width: width, scale: displayScale),
+               let url = URL(string: source.url) {
+                ArticleImage(
+                    url: url,
+                    knownAspectRatio: source.aspectRatio,
+                    naturalWidth: source.naturalWidth
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .onTapGesture {
                     if let link = block.link.flatMap(URL.init(string:)) {
                         openURL(link)
@@ -107,6 +101,7 @@ private struct ImageBlockView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
 
@@ -119,11 +114,7 @@ private struct VideoBlockView: View {
             Link(destination: url) {
                 ZStack {
                     if let thumbnail = source.thumbnail.flatMap(URL.init(string:)) {
-                        AsyncImage(url: thumbnail) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
-                            Rectangle().fill(.fill.tertiary)
-                        }
+                        ArticleImage(url: thumbnail, knownAspectRatio: 16 / 9)
                     } else {
                         Rectangle().fill(.fill.tertiary)
                     }
@@ -260,16 +251,62 @@ extension TextBlock {
     }
 }
 
+/// The reader's measurements.
+enum ReaderLayout {
+    /// The widest the article's column gets, in points.
+    static let maxWidth: CGFloat = 720
+}
+
 extension ImageBlock {
-    /// The widest source, or the first when none says how wide it is.
-    var bestSource: ImageSource? {
-        sources.max { ($0.srcsetWidth ?? $0.width ?? 0) < ($1.srcsetWidth ?? $1.width ?? 0) } ?? sources.first
+    /// The source closest to the size it shows at: `width` points on a
+    /// screen of `scale` pixels per point. Sources say how big they are by
+    /// pixel density (`2x`), width in pixels (`640w`), or `width`
+    /// attribute; one that says none counts as 1x.
+    func bestSource(width: CGFloat, scale: CGFloat) -> ImageSource? {
+        sources.min { first, second in
+            abs(first.relativeSize(width: width, scale: scale) - 1)
+                < abs(second.relativeSize(width: width, scale: scale) - 1)
+        }
+    }
+}
+
+extension ImageSource {
+    /// Width over height, from the `width` and `height` attributes.
+    var aspectRatio: CGFloat? {
+        guard let width, let height, width > 0, height > 0 else { return nil }
+        return CGFloat(width) / CGFloat(height)
     }
 
-    var aspectRatio: CGFloat? {
-        guard let source = sources.first(where: { $0.width != nil && $0.height != nil }),
-              let width = source.width, let height = source.height, height > 0
-        else { return nil }
-        return CGFloat(width) / CGFloat(height)
+    /// How wide it's meant to show, in points, from its `width` attribute,
+    /// as a browser would: an image is never stretched past it.
+    var naturalWidth: CGFloat? {
+        width.map { CGFloat($0) }
+    }
+
+    /// Its size relative to what's needed: 1 is just right.
+    fileprivate func relativeSize(width shown: CGFloat, scale: CGFloat) -> CGFloat {
+        if let density {
+            return CGFloat(density) / scale
+        }
+        if let srcsetWidth {
+            return CGFloat(srcsetWidth) / (shown * scale)
+        }
+        if let width {
+            return CGFloat(width) / shown
+        }
+        return 1 / scale
+    }
+}
+
+extension Block {
+    /// The image blocks in this block, nested ones included.
+    var imageBlocks: [ImageBlock] {
+        switch self {
+        case .image(let image): [image]
+        case .listItem(let item): item.blocks.flatMap(\.imageBlocks)
+        case .quote(let quote): quote.blocks.flatMap(\.imageBlocks)
+        case .table(let table): table.cells.flatMap { $0.blocks.flatMap(\.imageBlocks) }
+        case .text, .video, .audio: []
+        }
     }
 }

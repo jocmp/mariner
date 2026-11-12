@@ -5,6 +5,7 @@ import SwiftUI
 /// text from its page. Choosing the full text sticks for the feed.
 struct ReaderView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.displayScale) private var displayScale
     let articleID: String
 
     @State private var content: ArticleContent?
@@ -15,6 +16,8 @@ struct ReaderView: View {
     @State private var wantsFullText = false
     @State private var isExtracting = false
     @State private var fullTextFailure: String?
+    /// The article column's width, for choosing which image sources to load.
+    @State private var columnWidth = ReaderLayout.maxWidth
 
     var body: some View {
         ScrollView {
@@ -31,7 +34,8 @@ struct ReaderView: View {
                     }
                 }
                 .padding()
-                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: ReaderLayout.maxWidth, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
                 .frame(maxWidth: .infinity)
             }
         }
@@ -90,6 +94,7 @@ struct ReaderView: View {
         self.content = content
         let article = content.article
         feedDocument = await condensed(content.contentHtml ?? article.summary, base: article.url)
+        prefetchImages(feedDocument)
         if !article.read {
             await model.setRead(article.id, true)
         }
@@ -124,9 +129,22 @@ struct ReaderView: View {
                 return
             }
             fullTextDocument = await condensed(html, base: article.url)
+            prefetchImages(fullTextDocument)
         } catch {
             fullTextFailure = "Couldn't get the full text: \(error)"
         }
+    }
+
+    /// Starts loading the article's images, so they're ready, and their
+    /// shapes known, before they're scrolled to.
+    private func prefetchImages(_ document: ArticleDocument?) {
+        guard let document else { return }
+        let width = columnWidth
+        let urls = document.blocks
+            .flatMap(\.imageBlocks)
+            .compactMap { $0.bestSource(width: width, scale: displayScale) }
+            .compactMap { URL(string: $0.url) }
+        ImageStore.shared.prefetch(urls, maxPixelWidth: ReaderLayout.maxWidth * displayScale)
     }
 
     /// Condenses `html` off the main thread.

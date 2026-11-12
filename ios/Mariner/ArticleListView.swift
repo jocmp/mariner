@@ -99,10 +99,19 @@ struct FeedIcon: View {
     let feed: Feed
     var size: CGFloat = 20
 
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: UIImage?
+
+    init(feed: Feed, size: CGFloat = 20) {
+        self.feed = feed
+        self.size = size
+        _image = State(initialValue: Self.url(feed).flatMap(ImageStore.shared.cachedImage))
+    }
+
     var body: some View {
-        AsyncImage(url: feed.faviconUrl.flatMap(URL.init(string:))) { phase in
-            if case .success(let image) = phase {
-                image
+        Group {
+            if let image {
+                Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
             } else {
@@ -116,5 +125,13 @@ struct FeedIcon: View {
         .frame(width: size, height: size)
         .clipShape(.rect(cornerRadius: size * 0.22))
         .accessibilityHidden(true)
+        .task(id: feed.faviconUrl) {
+            guard image == nil, let url = Self.url(feed) else { return }
+            image = await ImageStore.shared.image(url, maxPixelWidth: size * displayScale)
+        }
+    }
+
+    private static func url(_ feed: Feed) -> URL? {
+        feed.faviconUrl.flatMap(URL.init(string:))
     }
 }
