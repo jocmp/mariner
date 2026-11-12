@@ -1,0 +1,18 @@
+[package]
+name = "mariner-bindgen"
+description = "Generates Swift and Kotlin bindings for mariner-ffi."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+uniffi = { workspace = true, features = ["cli", "cargo-metadata"] }
+
+[lints]
+workspace = true

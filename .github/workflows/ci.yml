@@ -26,3 +26,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Generates the Swift and Kotlin bindings and compiles them, so an export
+  # that doesn't translate fails here rather than in an app.
+  bindings:
+    runs-on: ubuntu-latest
+    env:
+      JNA: 5.19.1
+      COROUTINES: 1.11.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p mariner-ffi
+      - run: >-
+          cargo run -p mariner-bindgen -- generate
+          --library target/debug/libmariner_ffi.so
+          --language swift --language kotlin
+          --out-dir target/bindings --no-format
+      - name: Typecheck Swift
+        run: >-
+          swiftc -typecheck target/bindings/Mariner.swift
+          -Xcc -fmodule-map-file=target/bindings/MarinerFFI.modulemap
+          -I target/bindings
+      - name: Compile Kotlin
+        run: |
+          mkdir -p target/jars
+          curl -sSfL -o target/jars/jna.jar \
+            "https://repo1.maven.org/maven2/net/java/dev/jna/jna/$JNA/jna-$JNA.jar"
+          curl -sSfL -o target/jars/coroutines.jar \
+            "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/$COROUTINES/kotlinx-coroutines-core-jvm-$COROUTINES.jar"
+          kotlinc target/bindings/com/jocmp/mariner/ffi/mariner_ffi.kt \
+            -cp target/jars/jna.jar:target/jars/coroutines.jar -d target/kotlin

@@ -7,9 +7,23 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[dependencies]
-mariner-core = { path = "../mariner-core" }
-mariner-condense = { path = "../mariner-condense" }
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+name = "mariner_ffi"
 
-[lints]
-workspace = true
+[dependencies]
+async-trait.workspace = true
+mariner-condense = { path = "../mariner-condense" }
+mariner-core = { path = "../mariner-core" }
+mariner-feeds = { path = "../mariner-feeds", default-features = false }
+thiserror.workspace = true
+uniffi.workspace = true
+
+[dev-dependencies]
+futures-executor.workspace = true
+tempfile.workspace = true
+
+# The workspace's lints, except `unsafe_code = "forbid"`: UniFFI's
+# generated scaffolding is unsafe by nature. This crate's own code has none.
+[lints.clippy]
+all = { level = "warn", priority = -1 }

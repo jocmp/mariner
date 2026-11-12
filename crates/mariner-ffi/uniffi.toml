@@ -1,0 +1,8 @@
+[bindings.kotlin]
+package_name = "com.jocmp.mariner.ffi"
+cdylib_name = "mariner_ffi"
+
+[bindings.swift]
+module_name = "Mariner"
+ffi_module_name = "MarinerFFI"
+ffi_module_filename = "MarinerFFI"
