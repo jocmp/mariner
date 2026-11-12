@@ -383,3 +383,37 @@ fn removing_a_folders_last_feed_removes_the_folder() {
         assert_eq!(tags, ["Shared"], "Solo had no other feed");
     });
 }
+
+#[test]
+fn moving_a_folders_last_feed_out_removes_the_folder() {
+    block_on(async {
+        let (_dir, account) = local_account(&Network::default().with(FEED_URL, RSS)).await;
+        let feed = account.subscribe(FEED_URL, None).await.unwrap();
+        let feed = account
+            .update_feed(&feed, &feed.title, &["Old".to_string()])
+            .await
+            .unwrap();
+        account
+            .update_feed(&feed, &feed.title, &["New".to_string()])
+            .await
+            .unwrap();
+        let tags: Vec<String> = account
+            .tags()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|tag| tag.name)
+            .collect();
+        assert_eq!(tags, ["New"]);
+
+        account.update_tag("New", "Renamed").await.unwrap();
+        let tags: Vec<String> = account
+            .tags()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|tag| tag.name)
+            .collect();
+        assert_eq!(tags, ["Renamed"], "renaming leaves no empty folder either");
+    });
+}

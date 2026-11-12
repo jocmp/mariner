@@ -132,7 +132,8 @@ impl<F: Fetch + Send + Sync> Account<F> {
         self.delegate.subscribe(self, url, title).await
     }
 
-    /// Renames a feed and replaces its tags.
+    /// Renames a feed and replaces its tags. A folder it leaves that no
+    /// other feed is in is removed.
     pub async fn update_feed(
         &self,
         feed: &Feed,

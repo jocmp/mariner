@@ -50,7 +50,8 @@ pub(super) async fn subscribe(
     Ok(feed)
 }
 
-/// Renames the feed and replaces its tags.
+/// Renames the feed and replaces its tags, deleting any it left that no
+/// other feed has.
 pub(super) async fn update(
     database: &Database,
     id: &str,
@@ -61,8 +62,10 @@ pub(super) async fn update(
     let feed = database
         .write(move |connection| {
             let transaction = connection.transaction()?;
+            let old_tag_names = queries::tag_names(&transaction, &id)?;
             transaction.execute(feeds::UPDATE_FEED_TITLE, params![id, title])?;
             replace_taggings(&transaction, &id, &tag_names)?;
+            delete_emptied_tags(&transaction, &old_tag_names)?;
             let stored = queries::feed(&transaction, &id)?;
             transaction.commit()?;
             stored.ok_or(rusqlite::Error::QueryReturnedNoRows)
@@ -131,8 +134,7 @@ pub(super) async fn remove(database: &Database, id: &str) -> Result<()> {
             let tag_names = queries::tag_names(&transaction, &id)?;
             transaction.execute(feeds::DELETE_FEED_STATUSES, [&id])?;
             transaction.execute(feeds::DELETE_FEED, [&id])?;
-            let tag_names = serde_json::to_string(&tag_names).expect("strings serialize");
-            transaction.execute(tags::DELETE_TAGS_WITHOUT_FEEDS, [tag_names])?;
+            delete_emptied_tags(&transaction, &tag_names)?;
             transaction.commit()
         })
         .await?;
@@ -165,6 +167,13 @@ fn feed_id(url: &str) -> String {
 fn url_from_host(url: &str) -> Option<String> {
     let host = Url::parse(url).ok()?.host_str()?.to_string();
     Some(format!("http://{host}"))
+}
+
+/// Deletes the tags among `names` that no feed has any more.
+fn delete_emptied_tags(transaction: &Transaction, names: &[String]) -> rusqlite::Result<()> {
+    let names = serde_json::to_string(names).expect("strings serialize");
+    transaction.execute(tags::DELETE_TAGS_WITHOUT_FEEDS, [names])?;
+    Ok(())
 }
 
 fn replace_taggings(
