@@ -366,7 +366,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 /// A button: `[ Subscribe ]`, reversed when focused. Returns where it is.
 fn draw_button(frame: &mut Frame, area: Rect, button: Button, focused: bool) -> Rect {
     let label = match button {
-        Button::AddToFolder => "[ Add to Folder ]",
+        Button::AddToFolder => "[ Add to Folder… ]",
         Button::Subscribe => "[ Subscribe ]",
     };
     let area = Rect {

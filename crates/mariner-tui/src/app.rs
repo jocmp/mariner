@@ -1393,7 +1393,7 @@ mod tests {
         }
         assert!(
             screen.contains("Posts")
-                && screen.contains("[ Add to Folder ]")
+                && screen.contains("[ Add to Folder… ]")
                 && screen.contains("[ Subscribe ]"),
             "one feed still shows the selector: {screen}"
         );
