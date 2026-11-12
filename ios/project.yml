@@ -25,6 +25,17 @@ targets:
       - package: MarinerKit
         product: Mariner
     scheme: {}
+    info:
+      path: Mariner/Info.plist
+      properties:
+        # OPML, for importing and exporting subscription lists.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.opml.opml
+            UTTypeDescription: OPML Subscription List
+            UTTypeConformsTo: [public.xml]
+            UTTypeTagSpecification:
+              public.filename-extension: [opml]
+              public.mime-type: [text/x-opml]
     settings:
       base:
         PRODUCT_NAME: Mariner

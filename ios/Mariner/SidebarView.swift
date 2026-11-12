@@ -11,6 +11,9 @@ struct SidebarView: View {
     @State private var newName = ""
     @State private var moving: Feed?
     @State private var removing: Target?
+    @State private var isImporting = false
+    @State private var exported: OPMLDocument?
+    @State private var importMessage: String?
 
     /// A feed or a folder, to rename or remove.
     enum Target: Hashable {
@@ -58,6 +61,38 @@ struct SidebarView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Add Feed", systemImage: "plus") { isAddingFeed = true }
             }
+            ToolbarItem(placement: .secondaryAction) {
+                Menu("More", systemImage: "ellipsis") {
+                    // Only local accounts import; it's the only kind so far.
+                    Button("Import OPML…", systemImage: "square.and.arrow.down") {
+                        isImporting = true
+                    }
+                    Button("Export OPML…", systemImage: "square.and.arrow.up") {
+                        Task { await export() }
+                    }
+                }
+            }
+        }
+        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.opml, .xml]) { result in
+            Task { await importOPML(result) }
+        }
+        .fileExporter(
+            isPresented: Binding(get: { exported != nil }, set: { if !$0 { exported = nil } }),
+            document: exported,
+            contentType: .opml,
+            defaultFilename: "Mariner"
+        ) { result in
+            if case .failure(let error) = result {
+                model.show(error)
+            }
+        }
+        .alert(
+            "Imported",
+            isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })
+        ) {
+            Button("OK") {}
+        } message: {
+            Text(importMessage ?? "")
         }
         .sheet(isPresented: $isAddingFeed) {
             AddFeedView()
@@ -151,6 +186,33 @@ struct SidebarView: View {
             case .feed(let feed): await model.removeFeed(id: feed.id)
             case .folder(let folder): await model.removeFolder(folder)
             }
+        }
+    }
+
+    private func importOPML(_ result: Result<URL, Error>) async {
+        do {
+            let url = try result.get()
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing { url.stopAccessingSecurityScopedResource() }
+            }
+            let imported = try await model.importOPML(Data(contentsOf: url))
+            importMessage = switch (imported.added, imported.existing) {
+            case (0, 0): "There were no feeds in that file."
+            case (let added, 0): "Subscribed to \(added) feeds. Refreshing…"
+            case (let added, let existing):
+                "Subscribed to \(added) feeds; \(existing) were already here. Refreshing…"
+            }
+        } catch {
+            model.show(error)
+        }
+    }
+
+    private func export() async {
+        do {
+            exported = OPMLDocument(text: try await model.exportOPML())
+        } catch {
+            model.show(error)
         }
     }
 

@@ -184,6 +184,22 @@ final class AppModel {
         await reload()
     }
 
+    /// Subscribes to every feed in an OPML file, in its folders, then
+    /// refreshes for their articles.
+    func importOPML(_ document: Data) async throws -> OpmlImport {
+        guard let account else { return OpmlImport(added: 0, existing: 0) }
+        let imported = try await account.importOpml(document: document)
+        await reload()
+        Task { await refresh() }
+        return imported
+    }
+
+    /// Every feed, in its folders, as OPML.
+    func exportOPML() async throws -> String {
+        guard let account else { return "" }
+        return try await account.exportOpml()
+    }
+
     func feed(id: String) -> Feed? {
         feeds.first { $0.id == id }
     }
