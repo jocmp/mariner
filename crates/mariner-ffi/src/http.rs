@@ -41,16 +41,16 @@ pub struct HttpHeader {
 pub enum HttpError {
     #[error("timed out")]
     Timeout,
-    #[error("couldn't connect: {message}")]
-    Connect { message: String },
-    #[error("{message}")]
-    Request { message: String },
+    #[error("couldn't connect: {reason}")]
+    Connect { reason: String },
+    #[error("{reason}")]
+    Request { reason: String },
 }
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for HttpError {
     fn from(error: uniffi::UnexpectedUniFFICallbackError) -> Self {
         HttpError::Request {
-            message: error.reason,
+            reason: error.reason,
         }
     }
 }
@@ -109,7 +109,7 @@ impl From<Request> for HttpRequest {
 fn fetch_error(error: HttpError) -> FetchError {
     match error {
         HttpError::Timeout => FetchError::Timeout,
-        HttpError::Connect { message } => FetchError::Connect(message),
-        HttpError::Request { message } => FetchError::Request(message),
+        HttpError::Connect { reason } => FetchError::Connect(reason),
+        HttpError::Request { reason } => FetchError::Request(reason),
     }
 }

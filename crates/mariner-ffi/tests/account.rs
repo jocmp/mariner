@@ -50,7 +50,7 @@ impl HttpClient for Stub {
         self.requests.lock().unwrap().push(request.url.clone());
         let response = self.responses.lock().unwrap().get(&request.url).cloned();
         response.ok_or_else(|| HttpError::Connect {
-            message: format!("no route to {}", request.url),
+            reason: format!("no route to {}", request.url),
         })
     }
 }
@@ -108,7 +108,7 @@ fn reports_the_apps_network_errors() {
     let error = block_on(account.add_feed("https://offline.example/".into(), None, None))
         .expect_err("nothing answers");
     assert!(
-        matches!(&error, MarinerError::Network { message } if message.contains("no route")),
+        matches!(&error, MarinerError::Network { reason } if reason.contains("no route")),
         "{error:?}"
     );
 }
