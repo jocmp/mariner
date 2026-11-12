@@ -191,7 +191,7 @@ The date cleaner has its own corpus of about 27,000 JS results in `tests/dates/`
 
 Known differences:
 
-- Markdown output uses [htmd](https://crates.io/crates/htmd), configured like turndown's defaults. It's close to upstream's output, but not identical.
+- Markdown output uses [htmd](https://crates.io/crates/htmd), configured like turndown's defaults. It's close to upstream's output, but not identical. It needs the `markdown` feature (on by default).
 - Offset-less dates are interpreted as UTC. Upstream uses the machine's local timezone.
 
 ## License

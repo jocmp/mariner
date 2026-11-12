@@ -22,6 +22,8 @@ use crate::utils::url::{parse_url, validate_url};
 pub enum ContentType {
     #[default]
     Html,
+    /// Needs the `markdown` feature.
+    #[cfg(feature = "markdown")]
     Markdown,
     Text,
 }
@@ -301,6 +303,7 @@ fn into_result(extracted: Extracted) -> ParseResult {
     }
 }
 
+#[cfg(feature = "markdown")]
 // Markdown with turndown's defaults, which upstream uses: setext
 // headings, indented code blocks, and `_` for emphasis.
 fn to_markdown(html: &str) -> String {
@@ -340,6 +343,7 @@ fn convert_content(result: &mut ParseResult, content_type: ContentType) {
 
     match content_type {
         ContentType::Html => {}
+        #[cfg(feature = "markdown")]
         ContentType::Markdown => {
             result.content = Some(to_markdown(content));
         }

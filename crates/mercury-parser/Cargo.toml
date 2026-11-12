@@ -10,9 +10,12 @@ keywords = ["mercury", "parser", "reader", "article", "readability"]
 categories = ["parser-implementations", "web-programming"]
 
 [features]
-default = ["fetch"]
+default = ["fetch", "markdown"]
 # Fetch pages over HTTP. Without it, pass HTML via `ParseOptions::html`.
 fetch = ["dep:reqwest"]
+# Markdown output (`ContentType::Markdown`), with htmd. It brings its own
+# copy of html5ever, so leave it off when only HTML or text is needed.
+markdown = ["dep:htmd"]
 
 [dependencies]
 chrono.workspace = true
@@ -20,7 +23,7 @@ chrono-tz.workspace = true
 dom_query.workspace = true
 encoding_rs.workspace = true
 html5ever.workspace = true
-htmd.workspace = true
+htmd = { workspace = true, optional = true }
 regex.workspace = true
 reqwest = { workspace = true, optional = true }
 serde.workspace = true
