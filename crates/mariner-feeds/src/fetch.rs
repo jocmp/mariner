@@ -1,6 +1,8 @@
 //! Fetching over the network, behind a trait, so callers choose how: with
 //! [`HttpFetcher`] (reqwest), or with their platform's own HTTP client.
 
+use url::Url;
+
 use crate::{Feed, parse_with_charset};
 
 #[cfg(feature = "fetch")]
@@ -13,6 +15,51 @@ pub use http::HttpFetcher;
 pub trait Fetch {
     fn fetch(&self, request: &Request)
     -> impl Future<Output = Result<Response, FetchError>> + Send;
+}
+
+/// Redirects followed before giving up.
+const MAX_REDIRECTS: usize = 10;
+
+/// Fetches `request` with `send`, which makes one request without following
+/// redirects, following each redirect itself and recording it. This is
+/// [`Fetch`] for HTTP clients that make one request at a time.
+pub async fn follow_redirects<S, F>(request: &Request, mut send: S) -> Result<Response, FetchError>
+where
+    S: FnMut(Request) -> F,
+    F: Future<Output = Result<Response, FetchError>>,
+{
+    let mut url = Url::parse(&request.url).map_err(|e| FetchError::Request(e.to_string()))?;
+    let mut redirects = Vec::new();
+    loop {
+        let hop = Request {
+            url: url.to_string(),
+            headers: request.headers.clone(),
+        };
+        let mut response = send(hop).await?;
+        let next = response
+            .header("location")
+            .and_then(|location| url.join(location).ok());
+        match next {
+            Some(next) if (300..400).contains(&response.status) => {
+                if redirects.len() == MAX_REDIRECTS {
+                    return Err(FetchError::Request(format!(
+                        "more than {MAX_REDIRECTS} redirects"
+                    )));
+                }
+                redirects.push(Redirect {
+                    status: response.status,
+                    from: url.to_string(),
+                    to: next.to_string(),
+                });
+                url = next;
+            }
+            _ => {
+                response.url = url.to_string();
+                response.redirects = redirects;
+                return Ok(response);
+            }
+        }
+    }
 }
 
 /// A GET request.
