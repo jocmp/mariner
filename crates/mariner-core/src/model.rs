@@ -79,6 +79,15 @@ impl ArticleScope {
     }
 }
 
+/// What importing a subscription list did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OpmlImport {
+    /// Feeds subscribed to.
+    pub added: usize,
+    /// Feeds subscribed to already, which got the list's folders.
+    pub existing: usize,
+}
+
 /// A feed a URL leads to, to subscribe to by its URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedChoice {

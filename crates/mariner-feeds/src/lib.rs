@@ -9,6 +9,7 @@ pub mod finder;
 mod json_feed;
 mod media;
 mod model;
+pub mod opml;
 mod parser;
 mod rules;
 mod sax;

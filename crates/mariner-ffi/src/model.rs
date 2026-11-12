@@ -64,6 +64,24 @@ pub enum ArticleScope {
     Tag { name: String },
 }
 
+/// What importing a subscription list did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct OpmlImport {
+    /// Feeds subscribed to.
+    pub added: u32,
+    /// Feeds subscribed to already, which got the list's folders.
+    pub existing: u32,
+}
+
+impl From<core::OpmlImport> for OpmlImport {
+    fn from(imported: core::OpmlImport) -> Self {
+        OpmlImport {
+            added: u32::try_from(imported.added).unwrap_or(u32::MAX),
+            existing: u32::try_from(imported.existing).unwrap_or(u32::MAX),
+        }
+    }
+}
+
 /// A feed a URL leads to, to subscribe to by its URL.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FeedChoice {

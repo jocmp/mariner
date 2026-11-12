@@ -1,5 +1,6 @@
 //! Database benchmarks: a refresh's worth of new articles, a page of the
-//! unread list, and marking everything read. Driven by a minimal executor,
+//! unread list, marking everything read, and importing and exporting a
+//! subscription list. Driven by a minimal executor,
 //! like the app's would be, with no network.
 
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use mariner_feeds::fetch::{Fetch, FetchError, Request, Response};
 const FEEDS: usize = 50;
 const ITEMS_PER_FEED: usize = 20;
 
-criterion_group!(benches, refresh, unread_page, mark_all_read);
+criterion_group!(benches, refresh, unread_page, mark_all_read, opml);
 criterion_main!(benches);
 
 /// 50 subscribed feeds, each serving 20 items it hasn't served before.
@@ -65,6 +66,41 @@ fn mark_all_read(c: &mut Criterion) {
         );
     });
     group.finish();
+}
+
+/// 1,000 feeds in 20 folders, imported into an empty account and exported.
+fn opml(c: &mut Criterion) {
+    let list = opml_list(1_000, 20);
+    let mut group = c.benchmark_group("opml");
+    group.sample_size(20);
+    group.bench_function("import 1,000 feeds", |b| {
+        b.iter_batched(
+            || block_on(empty_account(Network::default())),
+            |(_dir, account)| block_on(account.import_opml(list.as_bytes())).unwrap(),
+            BatchSize::PerIteration,
+        );
+    });
+    let (_dir, account) = block_on(empty_account(Network::default()));
+    block_on(account.import_opml(list.as_bytes())).unwrap();
+    group.bench_function("export 1,000 feeds", |b| {
+        b.iter(|| block_on(account.export_opml()).unwrap());
+    });
+    group.finish();
+}
+
+/// An OPML document of `feeds` feeds spread over `folders` folders.
+fn opml_list(feeds: usize, folders: usize) -> String {
+    let mut body = String::new();
+    for folder in 0..folders {
+        body.push_str(&format!("<outline text=\"Folder {folder}\">"));
+        for feed in (folder..feeds).step_by(folders) {
+            body.push_str(&format!(
+                "<outline text=\"Feed {feed}\" xmlUrl=\"https://example.com/{feed}.xml\" htmlUrl=\"https://example.com/\"/>"
+            ));
+        }
+        body.push_str("</outline>");
+    }
+    format!("<opml version=\"2.0\"><body>{body}</body></opml>")
 }
 
 /// An account subscribed to every feed the network serves.

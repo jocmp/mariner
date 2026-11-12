@@ -9,11 +9,14 @@
 use chrono::{DateTime, Utc};
 use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::FoundFeed;
+use mariner_feeds::opml::{self, Subscription};
 
 use crate::database::Database;
 use std::collections::HashMap;
 
-use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, Tag};
+use crate::model::{
+    Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, OpmlImport, Tag,
+};
 use crate::{Result, queries, time};
 
 mod articles;
@@ -132,6 +135,32 @@ impl<F: Fetch + Send + Sync> Account<F> {
         self.delegate.subscribe(self, url, title).await
     }
 
+    /// Every feed, with its folders, as an OPML document. Works for any
+    /// kind of account, from what's stored.
+    pub async fn export_opml(&self) -> Result<String> {
+        let subscriptions: Vec<Subscription> = self
+            .feeds()
+            .await?
+            .into_iter()
+            .map(|feed| Subscription {
+                feed_url: feed.feed_url,
+                title: Some(feed.title),
+                site_url: feed.site_url,
+                folders: feed.tag_names,
+            })
+            .collect();
+        Ok(opml::write(&subscriptions))
+    }
+
+    /// Subscribes to every feed in an OPML document, in its folders,
+    /// without fetching anything: the next refresh brings in their articles.
+    /// Feeds subscribed already are added to the document's folders. Only
+    /// local accounts import; a sync service has its own import.
+    pub async fn import_opml(&self, document: &[u8]) -> Result<OpmlImport> {
+        let subscriptions = opml::parse(document)?;
+        self.delegate.import_opml(self, subscriptions).await
+    }
+
     /// Renames a feed and replaces its tags. A folder it leaves that no
     /// other feed is in is removed.
     pub async fn update_feed(
@@ -177,6 +206,15 @@ impl<F: Fetch + Send + Sync> Account<F> {
         feeds::remove_tag(&self.database, name).await
     }
 
+    /// Stores feeds from a subscription list as they're listed, with their
+    /// folders, in one transaction.
+    pub(crate) async fn store_subscriptions(
+        &self,
+        subscriptions: Vec<Subscription>,
+    ) -> Result<OpmlImport> {
+        feeds::import(&self.database, subscriptions).await
+    }
+
     /// Stores a feed's icon, found by the delegate.
     pub(crate) async fn set_favicon(&self, feed_id: &str, url: &str) -> Result<()> {
         feeds::set_favicon(&self.database, feed_id, url).await
@@ -218,6 +256,16 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
     async fn find_feeds(&self, account: &Account<F>, url: &str) -> Result<Vec<FeedChoice>> {
         match self {
             Delegate::Local(delegate) => delegate.find_feeds(account, url).await,
+        }
+    }
+
+    async fn import_opml(
+        &self,
+        account: &Account<F>,
+        subscriptions: Vec<Subscription>,
+    ) -> Result<OpmlImport> {
+        match self {
+            Delegate::Local(delegate) => delegate.import_opml(account, subscriptions).await,
         }
     }
 
@@ -299,6 +347,14 @@ pub(crate) trait AccountDelegate<F> {
         account: &Account<F>,
         url: &str,
     ) -> impl Future<Output = Result<Vec<FeedChoice>>> + Send;
+
+    /// Subscribes to a list's feeds, storing them through
+    /// [`Account::store_subscriptions`]. Only local accounts import.
+    fn import_opml(
+        &self,
+        account: &Account<F>,
+        subscriptions: Vec<Subscription>,
+    ) -> impl Future<Output = Result<OpmlImport>> + Send;
 
     /// Subscribes to the feed at `url` (with the service, for a sync
     /// account), storing it through [`Account::store_feed`].

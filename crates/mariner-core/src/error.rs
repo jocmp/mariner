@@ -1,5 +1,6 @@
 use mariner_feeds::fetch::FetchError;
 use mariner_feeds::finder::FindError;
+use mariner_feeds::opml::OpmlError;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -15,6 +16,8 @@ pub enum Error {
     Status { url: String, status: u16 },
     #[error("no feed at {url}")]
     NoFeed { url: String },
+    #[error(transparent)]
+    Opml(#[from] OpmlError),
     #[error("couldn't extract the article: {0}")]
     Extract(#[from] mercury_parser::Error),
 }

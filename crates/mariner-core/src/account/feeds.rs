@@ -1,13 +1,14 @@
 //! Subscribing to, editing and removing feeds and tags.
 
 use mariner_feeds::finder::FoundFeed;
+use mariner_feeds::opml::Subscription;
 use rusqlite::{Transaction, params};
 use sha1::{Digest, Sha1};
 use url::Url;
 
 use super::articles;
 use crate::database::Database;
-use crate::model::Feed;
+use crate::model::{Feed, OpmlImport};
 use crate::sql::account::{feeds, tags};
 use crate::{Result, queries, time};
 
@@ -48,6 +49,46 @@ pub(super) async fn subscribe(
         })
         .await?;
     Ok(feed)
+}
+
+/// Stores a subscription list's feeds as listed, without their entries,
+/// and adds each to its folders. Feeds stored already only get the folders.
+pub(super) async fn import(
+    database: &Database,
+    subscriptions: Vec<Subscription>,
+) -> Result<OpmlImport> {
+    let imported = database
+        .write(move |connection| {
+            let transaction = connection.transaction()?;
+            let mut imported = OpmlImport::default();
+            {
+                let mut existing = transaction.prepare_cached(feeds::SELECT_FEED_ID_BY_URL)?;
+                let mut insert = transaction.prepare_cached(feeds::INSERT_FEED)?;
+                for subscription in subscriptions {
+                    let url = subscription.feed_url;
+                    let id = match existing.query_row([&url], |row| row.get::<_, String>(0)) {
+                        Ok(id) => {
+                            imported.existing += 1;
+                            id
+                        }
+                        Err(rusqlite::Error::QueryReturnedNoRows) => {
+                            let id = feed_id(&url);
+                            let title = subscription.title.as_deref().unwrap_or(UNTITLED);
+                            let site_url = subscription.site_url.or_else(|| url_from_host(&url));
+                            insert.execute(params![id, title, url, site_url, None::<String>])?;
+                            imported.added += 1;
+                            id
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    add_taggings(&transaction, &id, &subscription.folders)?;
+                }
+            }
+            transaction.commit()?;
+            Ok(imported)
+        })
+        .await?;
+    Ok(imported)
 }
 
 /// Renames the feed and replaces its tags, deleting any it left that no
@@ -206,6 +247,15 @@ fn replace_taggings(
     tag_names: &[String],
 ) -> rusqlite::Result<()> {
     transaction.execute(tags::DELETE_FEED_TAGGINGS, [feed_id])?;
+    add_taggings(transaction, feed_id, tag_names)
+}
+
+/// Adds the feed to each named tag, keeping the ones it's in.
+fn add_taggings(
+    transaction: &Transaction,
+    feed_id: &str,
+    tag_names: &[String],
+) -> rusqlite::Result<()> {
     let mut tagging = transaction.prepare_cached(tags::INSERT_TAGGING)?;
     let mut tag = transaction.prepare_cached(tags::INSERT_TAG)?;
     for name in tag_names

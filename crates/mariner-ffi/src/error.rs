@@ -20,6 +20,9 @@ pub enum MarinerError {
     /// The page came back but its article couldn't be read.
     #[error("{reason}")]
     Extract { reason: String },
+    /// The file isn't an OPML subscription list.
+    #[error("{reason}")]
+    Opml { reason: String },
     /// Condensing failed: the base URL isn't a URL.
     #[error("{reason}")]
     Condense { reason: String },
@@ -37,6 +40,7 @@ impl From<Error> for MarinerError {
             Error::Find(_) => MarinerError::Network { reason },
             Error::Extract(_) => MarinerError::Extract { reason },
             Error::NoFeed { url } => MarinerError::NoFeed { url },
+            Error::Opml(_) => MarinerError::Opml { reason },
         }
     }
 }

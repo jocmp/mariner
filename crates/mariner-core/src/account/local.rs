@@ -5,11 +5,12 @@ use futures_util::stream::{self, StreamExt};
 use mariner_feeds::favicon;
 use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::{self, FoundFeed};
+use mariner_feeds::opml::Subscription;
 
 use chrono::{DateTime, Utc};
 
 use super::{Account, AccountDelegate, Status};
-use crate::model::{Feed, FeedChoice};
+use crate::model::{Feed, FeedChoice, OpmlImport};
 use crate::{Error, Result};
 
 mod crawl_data;
@@ -68,6 +69,16 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
             }
         }
         Ok(feed)
+    }
+
+    /// Stores the list's feeds as they are, NetNewsWire's way: nothing is
+    /// fetched, so even a long list takes a moment.
+    async fn import_opml(
+        &self,
+        account: &Account<F>,
+        subscriptions: Vec<Subscription>,
+    ) -> Result<OpmlImport> {
+        account.store_subscriptions(subscriptions).await
     }
 
     /// Fetches every feed that isn't backing off. Read articles that left

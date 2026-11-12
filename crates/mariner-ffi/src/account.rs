@@ -9,7 +9,9 @@ use mariner_core::{Database, Kind};
 
 use crate::error::MarinerError;
 use crate::http::{HttpClient, PlatformFetcher};
-use crate::model::{Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, Tag};
+use crate::model::{
+    Article, ArticleContent, ArticleFilter, ArticleScope, Feed, FeedChoice, OpmlImport, Tag,
+};
 
 type Result<T> = std::result::Result<T, MarinerError>;
 
@@ -95,6 +97,19 @@ impl Account {
     /// with `update_feed`.
     pub async fn subscribe(&self, url: String, title: Option<String>) -> Result<Feed> {
         Ok(self.account.subscribe(&url, title.as_deref()).await?.into())
+    }
+
+    /// Every feed, with its folders, as an OPML document, made on the spot.
+    /// Works for any kind of account.
+    pub async fn export_opml(&self) -> Result<String> {
+        Ok(self.account.export_opml().await?)
+    }
+
+    /// Subscribes to every feed in an OPML document, in its folders, without
+    /// fetching anything; refresh afterwards for their articles. Local
+    /// accounts only.
+    pub async fn import_opml(&self, document: Vec<u8>) -> Result<OpmlImport> {
+        Ok(self.account.import_opml(&document).await?.into())
     }
 
     /// Renames a feed and replaces its tags.

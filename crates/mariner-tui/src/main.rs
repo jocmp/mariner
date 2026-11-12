@@ -1,5 +1,5 @@
-//! Mariner's terminal UI: `mariner` opens the reader; subcommands add and
-//! refresh feeds from the shell.
+//! Mariner's terminal UI: `mariner` opens the reader; subcommands add,
+//! refresh, import and export feeds from the shell.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,6 +44,13 @@ enum Command {
     },
     /// Fetch new articles for every feed
     Refresh,
+    /// Subscribe to the feeds in an OPML file, in its folders, then refresh
+    Import { file: PathBuf },
+    /// Write every feed, in its folders, as OPML
+    Export {
+        /// Where to write it (default: standard output)
+        file: Option<PathBuf>,
+    },
     /// List subscribed feeds with their unread counts
     Feeds,
 }
@@ -80,6 +87,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  {}  {title}", choice.url);
                     }
                 }
+            }
+            Ok(())
+        }
+        Some(Command::Import { file }) => {
+            let document = std::fs::read(&file)?;
+            let imported = runtime.block_on(account.import_opml(&document))?;
+            println!(
+                "Imported {} feeds ({} already subscribed); refreshing…",
+                imported.added, imported.existing
+            );
+            runtime.block_on(account.refresh(None))?;
+            let unread: usize = runtime.block_on(account.unread_counts())?.values().sum();
+            println!("Refreshed; {unread} unread");
+            Ok(())
+        }
+        Some(Command::Export { file }) => {
+            let document = runtime.block_on(account.export_opml())?;
+            match file {
+                Some(file) => std::fs::write(file, document)?,
+                None => print!("{document}"),
             }
             Ok(())
         }
