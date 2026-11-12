@@ -35,15 +35,12 @@ pub enum Dialog {
     Rename { target: Target, input: String },
     /// Asking before removing a feed or folder called `name`.
     Remove { target: Target, name: String },
-    /// Picking the folder to move a feed to: `None` is no folder, and the
-    /// row after the last folder makes a new one.
+    /// The folders a feed is in, checked, to change: the same picker as
+    /// the feed selector's Add to Folder….
     Move {
         feed_id: String,
-        folders: Vec<Option<String>>,
-        list: ListState,
+        picker: FolderPicker,
     },
-    /// Typing the name of a new folder to move a feed to.
-    NewFolder { feed_id: String, input: String },
 }
 
 /// The feed selector's buttons, beneath its list.
@@ -51,6 +48,7 @@ pub enum Dialog {
 pub enum Button {
     AddToFolder,
     Subscribe,
+    Move,
 }
 
 /// Folders to check for a new feed, over the feed selector; the row after
@@ -84,11 +82,11 @@ pub enum Action {
     Open(String),
     Rename(Target, String),
     Remove(Target),
+    /// Puts a feed in exactly these folders.
     Move {
         feed_id: String,
-        folder: Option<String>,
+        folders: Vec<String>,
     },
-    NewFolder(String),
 }
 
 impl Dialog {
@@ -113,6 +111,15 @@ impl Dialog {
     /// Presses a button of the feed selector, or of its folder overlay
     /// (which has only Subscribe).
     pub fn press(&mut self, button: Button) -> Action {
+        if let Dialog::Move { feed_id, picker } = self {
+            return match button {
+                Button::Move => Action::Move {
+                    feed_id: feed_id.clone(),
+                    folders: picker.checked(),
+                },
+                Button::AddToFolder | Button::Subscribe => Action::None,
+            };
+        }
         let Dialog::Choose {
             choices,
             list,
@@ -135,9 +142,10 @@ impl Dialog {
             (Button::Subscribe, Some(picker)) => subscribe(picker.checked()),
             (Button::Subscribe, None) => subscribe(Vec::new()),
             (Button::AddToFolder, _) => {
-                *folders = Some(FolderPicker::new(folder_names.clone()));
+                *folders = Some(FolderPicker::new(folder_names.clone(), &[]));
                 Action::None
             }
+            (Button::Move, _) => Action::None,
         }
     }
 
@@ -148,19 +156,11 @@ impl Dialog {
         }
     }
 
-    /// Moving a feed now in `current`, choosing from `folders`.
-    pub fn move_to(feed_id: String, folders: Vec<String>, current: Option<&str>) -> Self {
-        let folders: Vec<Option<String>> = std::iter::once(None)
-            .chain(folders.into_iter().map(Some))
-            .collect();
-        let selected = folders
-            .iter()
-            .position(|folder| folder.as_deref() == current)
-            .unwrap_or(0);
+    /// Moving a feed now in `current`, choosing from every folder.
+    pub fn move_to(feed_id: String, folders: Vec<String>, current: &[String]) -> Self {
         Dialog::Move {
             feed_id,
-            folders,
-            list: ListState::default().with_selected(Some(selected)),
+            picker: FolderPicker::new(folders, current),
         }
     }
 
@@ -170,7 +170,7 @@ impl Dialog {
             Dialog::Choose {
                 folders: Some(_),
                 ..
-            }
+            } | Dialog::Move { .. }
         );
         if key.code == KeyCode::Esc && !in_folders {
             return Action::Close;
@@ -197,7 +197,7 @@ impl Dialog {
                     self.close_folders();
                     Action::None
                 }
-                FolderKey::Subscribe => self.press(Button::Subscribe),
+                FolderKey::Confirm => self.press(Button::Subscribe),
             },
             Dialog::Choose {
                 choices,
@@ -207,8 +207,8 @@ impl Dialog {
             } => match key.code {
                 KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
                     *focus = match focus {
-                        Button::AddToFolder => Button::Subscribe,
                         Button::Subscribe => Button::AddToFolder,
+                        Button::AddToFolder | Button::Move => Button::Subscribe,
                     };
                     Action::None
                 }
@@ -239,27 +239,10 @@ impl Dialog {
                 KeyCode::Char('n') => Action::Close,
                 _ => Action::None,
             },
-            Dialog::Move {
-                feed_id,
-                folders,
-                list,
-            } => match pick(key, list, folders.len() + 1) {
-                Some(row) if row == folders.len() => Action::NewFolder(feed_id.clone()),
-                Some(row) => Action::Move {
-                    feed_id: feed_id.clone(),
-                    folder: folders[row].clone(),
-                },
-                None => Action::None,
-            },
-            Dialog::NewFolder { feed_id, input } => match key.code {
-                KeyCode::Enter if !input.trim().is_empty() => Action::Move {
-                    feed_id: feed_id.clone(),
-                    folder: Some(input.trim().to_string()),
-                },
-                _ => {
-                    edit(input, key);
-                    Action::None
-                }
+            Dialog::Move { picker, .. } => match picker.on_key(key) {
+                FolderKey::None => Action::None,
+                FolderKey::Back => Action::Close,
+                FolderKey::Confirm => self.press(Button::Move),
             },
         }
     }
@@ -276,15 +259,23 @@ impl Dialog {
 /// What a key in the folder overlay asks for.
 enum FolderKey {
     None,
-    /// Back to the feed selector.
+    /// Out of the picker: back to the feed selector, or closed.
     Back,
-    Subscribe,
+    /// Subscribe, or Move.
+    Confirm,
 }
 
 impl FolderPicker {
-    fn new(names: Vec<String>) -> Self {
+    /// Every folder in `names`, with those in `checked` checked.
+    fn new(names: Vec<String>, checked: &[String]) -> Self {
         FolderPicker {
-            folders: names.into_iter().map(|name| (name, false)).collect(),
+            folders: names
+                .into_iter()
+                .map(|name| {
+                    let is_checked = checked.contains(&name);
+                    (name, is_checked)
+                })
+                .collect(),
             list: ListState::default().with_selected(Some(0)),
             new_folder: None,
         }
@@ -299,7 +290,7 @@ impl FolderPicker {
             .collect()
     }
 
-    /// Space checks a folder or starts naming a new one; Enter subscribes,
+    /// Space checks a folder or starts naming a new one; Enter confirms,
     /// or, while naming, adds the new folder checked.
     fn on_key(&mut self, key: KeyEvent) -> FolderKey {
         if let Some(name) = &mut self.new_folder {
@@ -324,7 +315,7 @@ impl FolderPicker {
         }
         match key.code {
             KeyCode::Esc => FolderKey::Back,
-            KeyCode::Enter => FolderKey::Subscribe,
+            KeyCode::Enter => FolderKey::Confirm,
             KeyCode::Char(' ') => {
                 match self.list.selected() {
                     Some(row) if row < self.folders.len() => {

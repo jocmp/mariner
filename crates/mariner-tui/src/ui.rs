@@ -67,9 +67,7 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog, buttons: &mut Vec<(Rect, 
         Dialog::Links { links, .. } => {
             (links.len() as u16 + 2).min(screen.height.saturating_sub(2))
         }
-        Dialog::Move { folders, .. } => {
-            (folders.len() as u16 + 3).min(screen.height.saturating_sub(2))
-        }
+        Dialog::Move { picker, .. } => picker_height(picker).min(screen.height),
         _ => 6.min(screen.height),
     };
     let area = Rect {
@@ -138,10 +136,6 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog, buttons: &mut Vec<(Rect, 
             let hint = "Enter to rename, Esc to cancel";
             frame.render_widget(text_box(title, "Name: ", input, hint), area);
         }
-        Dialog::NewFolder { input, .. } => {
-            let hint = "Enter to move the feed there, Esc to cancel";
-            frame.render_widget(text_box("New folder", "Name: ", input, hint), area);
-        }
         Dialog::Remove { target, name } => {
             let (title, question) = match target {
                 Target::Feed(_) => (
@@ -163,19 +157,8 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog, buttons: &mut Vec<(Rect, 
                 .wrap(Wrap { trim: true });
             frame.render_widget(paragraph, area);
         }
-        Dialog::Move { folders, list, .. } => {
-            let mut items: Vec<ListItem> = folders
-                .iter()
-                .map(|folder| match folder {
-                    Some(name) => ListItem::new(name.clone()),
-                    None => ListItem::new(Line::from("No folder").italic()),
-                })
-                .collect();
-            items.push(ListItem::new(Line::from("New folder…").italic()));
-            let list_widget = List::new(items)
-                .block(pane("Move to", true).title_bottom(" Enter to move · Esc to cancel "))
-                .highlight_style(highlight());
-            frame.render_stateful_widget(list_widget, area, list);
+        Dialog::Move { picker, .. } => {
+            draw_folder_picker(frame, area, picker, "Move to", Button::Move, buttons);
         }
         Dialog::Choose {
             choices,
@@ -222,7 +205,16 @@ fn draw_dialog(frame: &mut Frame, dialog: &mut Dialog, buttons: &mut Vec<(Rect, 
                 draw_button(frame, subscribe_area, Button::Subscribe, false);
             }
             if let Some(picker) = folders {
-                draw_folder_picker(frame, area, picker, buttons);
+                let width = area.width.saturating_sub(8).min(48);
+                let height = picker_height(picker).min(area.height);
+                let over = Rect {
+                    x: area.x + (area.width - width) / 2,
+                    y: area.y + area.height.saturating_sub(height) / 2,
+                    width,
+                    height,
+                };
+                let title = "Add to Folder";
+                draw_folder_picker(frame, over, picker, title, Button::Subscribe, buttons);
             }
         }
     }
@@ -368,6 +360,7 @@ fn draw_button(frame: &mut Frame, area: Rect, button: Button, focused: bool) -> 
     let label = match button {
         Button::AddToFolder => "[ Add to Folder… ]",
         Button::Subscribe => "[ Subscribe ]",
+        Button::Move => "[ Move ]",
     };
     let area = Rect {
         width: (label.chars().count() as u16).min(area.width),
@@ -382,24 +375,23 @@ fn draw_button(frame: &mut Frame, area: Rect, button: Button, focused: bool) -> 
     area
 }
 
-/// The folder overlay, over the feed selector: folders to check, a new
-/// folder, and Subscribe.
+/// The folders, a new folder row, a blank line, the button and borders.
+fn picker_height(picker: &FolderPicker) -> u16 {
+    picker.folders.len() as u16 + 6
+}
+
+/// Folders to check, a new folder to name, and the button that confirms:
+/// Add to Folder… over the feed selector (Subscribe), or Move to (Move).
 fn draw_folder_picker(
     frame: &mut Frame,
-    under: Rect,
+    area: Rect,
     picker: &mut FolderPicker,
+    title: &str,
+    button: Button,
     buttons: &mut Vec<(Rect, Button)>,
 ) {
-    let width = under.width.saturating_sub(8).min(48);
-    let height = (picker.folders.len() as u16 + 6).min(under.height);
-    let area = Rect {
-        x: under.x + (under.width - width) / 2,
-        y: under.y + under.height.saturating_sub(height) / 2,
-        width,
-        height,
-    };
     frame.render_widget(Clear, area);
-    let block = pane("Add to Folder", true).title_bottom(" Space to check · Esc to go back ");
+    let block = pane(title, true).title_bottom(" Space to check · Esc to go back ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let [list_area, _, subscribe_area] = Layout::vertical([
@@ -428,8 +420,8 @@ fn draw_folder_picker(
         list_area,
         &mut picker.list,
     );
-    let drawn = draw_button(frame, subscribe_area, Button::Subscribe, true);
-    buttons.push((drawn, Button::Subscribe));
+    let drawn = draw_button(frame, subscribe_area, button, true);
+    buttons.push((drawn, button));
 }
 
 /// A dialog with one text box.

@@ -301,13 +301,7 @@ impl<'a> App<'a> {
             }
             Action::Rename(target, name) => self.rename(target, name),
             Action::Remove(target) => self.remove(target),
-            Action::Move { feed_id, folder } => self.move_feed(feed_id, folder),
-            Action::NewFolder(feed_id) => {
-                self.dialog = Some(Dialog::NewFolder {
-                    feed_id,
-                    input: String::new(),
-                })
-            }
+            Action::Move { feed_id, folders } => self.move_feed(feed_id, folders),
         }
     }
 
@@ -912,21 +906,14 @@ impl<'a> App<'a> {
         self.dialog = Some(Dialog::Remove { target, name });
     }
 
-    /// Offers the folders to move the selected feed to.
+    /// Offers every folder to move the selected feed to, its own checked.
     fn ask_move(&mut self) {
-        let Row::Feed { id, folder } = self.selected_row().clone() else {
+        let Some(feed) = self.selected_feed().cloned() else {
             self.status = "Select a feed to move".into();
             return;
         };
-        let folders = self
-            .rows
-            .iter()
-            .filter_map(|row| match row {
-                Row::Folder(name) => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
-        self.dialog = Some(Dialog::move_to(id, folders, folder.as_deref()));
+        let folders = self.folder_names();
+        self.dialog = Some(Dialog::move_to(feed.id, folders, &feed.tag_names));
     }
 
     fn rename(&mut self, target: Target, name: String) {
@@ -1010,28 +997,28 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Puts a feed in one folder, or in none, opening the folder so the
-    /// feed stays in sight.
-    fn move_feed(&mut self, feed_id: String, folder: Option<String>) {
+    /// Puts a feed in exactly `folders`, opening them so the feed stays in
+    /// sight. Folders it leaves empty go.
+    fn move_feed(&mut self, feed_id: String, folders: Vec<String>) {
         self.dialog = None;
         let Some(feed) = self.feed(&feed_id).cloned() else {
             return;
         };
-        let tags: Vec<String> = folder.iter().cloned().collect();
         let result = self
             .runtime
-            .block_on(self.account.update_feed(&feed, &feed.title, &tags));
+            .block_on(self.account.update_feed(&feed, &feed.title, &folders));
         match result {
-            Ok(_) => {
-                if let Some(folder) = &folder {
+            Ok(moved) => {
+                for folder in &moved.tag_names {
                     self.set_folder_expanded(folder, true);
                 }
-                self.status = match &folder {
-                    Some(folder) => format!("Moved {} to {folder}", feed.title),
-                    None => format!("Moved {} out of its folder", feed.title),
+                self.status = if moved.tag_names.is_empty() {
+                    format!("Moved {} out of its folders", feed.title)
+                } else {
+                    format!("Moved {} to {}", feed.title, moved.tag_names.join(", "))
                 };
                 self.reload();
-                self.select_feed(&feed_id, folder.as_deref());
+                self.select_feed(&feed_id, moved.tag_names.first().map(String::as_str));
             }
             Err(error) => self.status = format!("Couldn't move: {error}"),
         }
@@ -1702,6 +1689,50 @@ mod tests {
     }
 
     #[test]
+    fn moves_a_feed_into_several_folders_and_out_of_all() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        let feed = app.feeds[0].clone();
+        runtime
+            .block_on(
+                app.account
+                    .update_feed(&feed, &feed.title, &["News".to_string()]),
+            )
+            .unwrap();
+        app.set_folder_expanded("News", true);
+        app.reload();
+        app.select_feed("f", Some("News"));
+
+        press(&mut app, KeyCode::Char('M'));
+        let screen = render(&mut app, 120);
+        assert!(
+            screen.contains(" Move to ")
+                && screen.contains("[x] News")
+                && screen.contains("[ Move ]"),
+            "its folder starts checked: {screen}"
+        );
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char(' '));
+        type_text(&mut app, "Tech");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.feeds[0].tag_names, ["News", "Tech"]);
+        assert_eq!(app.status, "Moved Example Feed to News, Tech");
+
+        press(&mut app, KeyCode::Char('M'));
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.feeds[0].tag_names.is_empty());
+        assert!(
+            app.folder_names().is_empty(),
+            "the folders it left empty are gone"
+        );
+    }
+
+    #[test]
     fn renames_moves_and_removes_feeds() {
         let runtime = Runtime::new().unwrap();
         let dir = tempfile_dir();
@@ -1717,9 +1748,10 @@ mod tests {
         assert_eq!(app.feeds[0].title, "Example Site");
 
         press(&mut app, KeyCode::Char('M'));
-        press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char(' '));
         type_text(&mut app, "News");
+        press(&mut app, KeyCode::Enter);
+        assert!(render(&mut app, 140).contains("[x] News"));
         press(&mut app, KeyCode::Enter);
         let screen = render(&mut app, 140);
         assert!(screen.contains("▾ News 2"), "{screen}");
