@@ -9,6 +9,18 @@ struct ArticleListView: View {
         @Bindable var model = model
         List(model.articles, selection: $model.selectedArticleID) { article in
             ArticleRow(article: article, feed: model.feed(id: article.feedId))
+                .background {
+                    // The selection, drawn inside the row's content rather
+                    // than as its background: on iPad the list runs under
+                    // the floating sidebar, and so would a background.
+                    if model.selectedArticleID == article.id {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.fill.secondary)
+                            .padding(.horizontal, -8)
+                            .padding(.vertical, -4)
+                    }
+                }
+                .listRowBackground(Color.clear)
                 .swipeActions(edge: .leading) {
                     Button(article.read ? "Unread" : "Read", systemImage: article.read ? "circle.fill" : "circle") {
                         Task { await model.setRead(article.id, !article.read) }
