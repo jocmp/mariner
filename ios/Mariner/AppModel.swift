@@ -307,7 +307,7 @@ final class AppModel {
     }
 
     func show(_ error: Error) {
-        errorMessage = String(describing: error)
+        errorMessage = userMessage(for: error)
     }
 
     private func updateListed(_ id: String, _ change: (inout Article) -> Void) {

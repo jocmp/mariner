@@ -13,6 +13,7 @@ struct AddFeedView: View {
     @State private var isWorking = false
     @State private var message: String?
     @State private var isChoosingFolders = false
+    @FocusState private var isURLFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -56,6 +57,7 @@ struct AddFeedView: View {
                     .textContentType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .focused($isURLFocused)
                     .onSubmit { find() }
             } footer: {
                 if let message {
@@ -63,6 +65,7 @@ struct AddFeedView: View {
                 }
             }
         }
+        .onAppear { isURLFocused = true }
     }
 
     private var feedSelector: some View {
@@ -108,7 +111,7 @@ struct AddFeedView: View {
                     selectedURL = found.first?.url
                 }
             } catch {
-                message = String(describing: error)
+                message = userMessage(for: error)
             }
         }
     }
@@ -124,7 +127,7 @@ struct AddFeedView: View {
                 dismiss()
             } catch {
                 isChoosingFolders = false
-                message = String(describing: error)
+                message = userMessage(for: error)
             }
         }
     }
