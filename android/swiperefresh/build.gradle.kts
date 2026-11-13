@@ -6,7 +6,7 @@ plugins {
 android {
   namespace = "com.jocmp.swiperefresh"
   compileSdk = 37
-  defaultConfig { minSdk = 31 }
+  defaultConfig { minSdk = 29 }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17

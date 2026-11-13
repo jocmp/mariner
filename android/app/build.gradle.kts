@@ -12,7 +12,7 @@ android {
   ndkVersion = "28.2.13676358"
   defaultConfig {
     applicationId = "com.jocmp.mariner"
-    minSdk = 31
+    minSdk = 29
     targetSdk = 37
     versionCode = 1
     versionName = "2026.11.1001"
@@ -137,7 +137,7 @@ fun cargoNdk(name: String, abis: List<String>, profile: String) =
     val targets = abis.flatMap { listOf("-t", it) }
     commandLine(
       listOf(cargo, "ndk") + targets +
-        listOf("--platform", "31", "-o", outputDir.get().asFile.path,
+        listOf("--platform", "29", "-o", outputDir.get().asFile.path,
           "build", "--locked", "--profile", profile, "-p", "mariner-ffi")
     )
   }

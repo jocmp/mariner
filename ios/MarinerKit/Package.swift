@@ -6,7 +6,7 @@ import PackageDescription
 /// Swift bindings, both written here by `make ios-kit`.
 let package = Package(
     name: "MarinerKit",
-    platforms: [.iOS(.v26)],
+    platforms: [.iOS(.v18)],
     products: [
         .library(name: "Mariner", targets: ["Mariner"]),
     ],

@@ -35,7 +35,7 @@ struct AddFeedView: View {
                         if isWorking {
                             ProgressView()
                         } else {
-                            Button("Find", role: .confirm) { find() }
+                            Button("Find") { find() }
                                 .disabled(url.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
                     }

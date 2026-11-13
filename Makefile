@@ -4,7 +4,7 @@ BINDINGS := target/bindings
 IOS_TARGETS := aarch64-apple-ios aarch64-apple-ios-sim
 IOS_KIT := ios/MarinerKit
 # Matches ios/project.yml, so the core's C code (SQLite) targets it too.
-IOS_DEPLOYMENT_TARGET := 26.0
+IOS_DEPLOYMENT_TARGET := 18.0
 
 # Builds the `mariner` terminal reader in release mode: target/release/mariner.
 build-tui:
