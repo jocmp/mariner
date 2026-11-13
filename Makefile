@@ -1,4 +1,4 @@
-.PHONY: build-tui install-tui bindings ios-kit ios
+.PHONY: build-tui install-tui bindings ios-kit ios android
 
 BINDINGS := target/bindings
 IOS_TARGETS := aarch64-apple-ios aarch64-apple-ios-sim
@@ -37,3 +37,8 @@ ios-kit: bindings
 # Builds the core and generates ios/Mariner.xcodeproj; open it in Xcode.
 ios: ios-kit
 	cd ios && xcodegen
+
+# Builds the Android app (the Rust core and its bindings included) and
+# installs it on the connected device or emulator.
+android:
+	cd android && ./gradlew installDebug
