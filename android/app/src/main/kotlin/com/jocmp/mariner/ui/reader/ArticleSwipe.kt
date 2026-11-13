@@ -1,23 +1,21 @@
 package com.jocmp.mariner.ui.reader
 
 import androidx.compose.animation.core.Spring
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,7 +33,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.jocmp.mariner.ffi.Article
@@ -51,9 +48,9 @@ private const val Resistance = 0.5f
 
 /**
  * Pulling past the top or bottom of the article opens the previous or next
- * one. As the pull grows, the page shrinks and rounds like Android's
- * predictive back, and a pill names the article it leads to; letting go past
- * the threshold opens it, and short of it springs back.
+ * one. The page stays put; a round indicator grows out of that edge like the
+ * droplet of Android's back gesture, and drops free at the threshold.
+ * Letting go past it opens the article; short of it, the indicator recedes.
  */
 @Composable
 fun ArticleSwipe(
@@ -114,64 +111,73 @@ fun ArticleSwipe(
     }
   }
 
-  Box(
-    modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHighest).nestedScroll(connection)
-  ) {
-    Box(
-      Modifier.fillMaxSize()
-        .graphicsLayer {
-          val scale = 1f - 0.08f * progress
-          scaleX = scale
-          scaleY = scale
-          translationY = offset * 0.4f
-          shape = RoundedCornerShape(32.dp * progress)
-          clip = progress > 0f
-          shadowElevation = 12.dp.toPx() * progress
-        }
-        .background(MaterialTheme.colorScheme.surface)
-    ) {
-      content()
-    }
+  Box(modifier.fillMaxSize().nestedScroll(connection)) {
+    content()
     if (offset != 0f) {
       val pullingDown = offset > 0
-      val target = if (pullingDown) previous else next
-      if (target != null) {
-        Pill(
-          label = if (pullingDown) "Previous" else "Next",
-          title = target.title ?: "Untitled",
-          pullingDown = pullingDown,
-          modifier =
-            Modifier.align(if (pullingDown) Alignment.TopCenter else Alignment.BottomCenter)
-              .padding(vertical = 24.dp, horizontal = 32.dp)
-              .graphicsLayer { alpha = progress },
-        )
-      }
+      Droplet(
+        progress = progress,
+        pull = abs(offset),
+        modifier =
+          Modifier.align(if (pullingDown) Alignment.TopCenter else Alignment.BottomCenter)
+            // Drawn from the top edge; flipped for the bottom.
+            .graphicsLayer { scaleY = if (pullingDown) 1f else -1f },
+      )
     }
   }
 }
 
-/** Where letting go leads. */
+/** The indicator's circle at full size. */
+private val Radius = 24.dp
+
+/**
+ * A circle that grows out of the edge as the pull grows, joined to it by a
+ * neck that thins until, at the threshold, the circle drops free and fills
+ * with the primary color: the droplet of Android's back gesture, at the
+ * top or bottom.
+ */
 @Composable
-private fun Pill(label: String, title: String, pullingDown: Boolean, modifier: Modifier) {
-  Surface(
-    modifier = modifier.widthIn(max = 480.dp),
-    shape = RoundedCornerShape(50),
-    color = MaterialTheme.colorScheme.secondaryContainer,
-    shadowElevation = 4.dp,
-  ) {
-    Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-      Icon(
-        if (pullingDown) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-        contentDescription = null,
-        modifier = Modifier.size(20.dp),
-      )
-      Text(
-        "$label: $title",
-        style = MaterialTheme.typography.labelLarge,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 8.dp),
-      )
+private fun Droplet(progress: Float, pull: Float, modifier: Modifier) {
+  val armed = progress >= 1f
+  val colors = MaterialTheme.colorScheme
+  val fill = if (armed) colors.primary else colors.secondaryContainer
+  val iconTint = if (armed) colors.onPrimary else colors.onSecondaryContainer
+  val density = LocalDensity.current
+  val radius = with(density) { Radius.toPx() } * (0.5f + 0.5f * progress)
+  // The circle's center, from the edge: it follows the pull, a little behind.
+  val center = min(pull * 0.6f, with(density) { (Threshold * 0.6f).toPx() }) + radius * 0.4f
+  val height = with(density) { (center + radius).toDp() + 8.dp }
+
+  Box(modifier.fillMaxWidth().height(height)) {
+    Canvas(Modifier.matchParentSize()) {
+      val cx = size.width / 2
+      drawCircle(fill, radius, Offset(cx, center))
+      if (!armed) {
+        // The neck: from a base on the edge, curving in to the circle's sides.
+        // Wide where it leaves the edge, pinched in the middle like a drop
+        // about to fall, and pinching more the further it's pulled.
+        val base = radius * (1.8f - 1.0f * progress)
+        val waist = radius * (0.55f - 0.4f * progress)
+        val neck = Path().apply {
+          moveTo(cx - base, 0f)
+          cubicTo(cx - waist, center * 0.25f, cx - waist, center - radius, cx - radius * 0.9f, center)
+          lineTo(cx + radius * 0.9f, center)
+          cubicTo(cx + waist, center - radius, cx + waist, center * 0.25f, cx + base, 0f)
+          close()
+        }
+        drawPath(neck, fill)
+      }
     }
+    Icon(
+      Icons.Default.KeyboardArrowUp,
+      contentDescription = null,
+      tint = iconTint,
+      modifier =
+        Modifier.align(Alignment.TopCenter)
+          .offset { IntOffset(0, (center - radius * 0.6f).toInt()) }
+          .size(with(density) { (radius * 1.2f).toDp() })
+          // Flipped with the rest for the bottom, where it points down.
+          .graphicsLayer { alpha = progress },
+    )
   }
 }
