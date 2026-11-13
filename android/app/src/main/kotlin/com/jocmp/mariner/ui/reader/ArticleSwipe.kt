@@ -1,21 +1,17 @@
 package com.jocmp.mariner.ui.reader
 
-import androidx.compose.animation.core.Spring
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.graphics.Path
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,20 +33,16 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.jocmp.mariner.ffi.Article
 import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
-/** How far past the end a pull has to go to open the next article. */
-private val Threshold = 120.dp
+/** How far past the end a pull goes to open the neighbor. */
+private val Threshold = 96.dp
 
-/** How much a pull past the end moves the page: it resists, as overscroll does. */
-private const val Resistance = 0.5f
+private val Size = 40.dp
 
 /**
  * Pulling past the top or bottom of the article opens the previous or next
- * one. The page stays put; a round indicator grows out of that edge like the
- * droplet of Android's back gesture, and drops free at the threshold.
- * Letting go past it opens the article; short of it, the indicator recedes.
+ * one. The page stays put: a round arrow slides in from that edge and fills
+ * with the primary color once letting go would open the article.
  */
 @Composable
 fun ArticleSwipe(
@@ -61,50 +53,46 @@ fun ArticleSwipe(
   content: @Composable () -> Unit,
 ) {
   val threshold = with(LocalDensity.current) { Threshold.toPx() }
+  val size = with(LocalDensity.current) { Size.toPx() }
   val haptics = LocalHapticFeedback.current
   // Positive pulls down from the top (previous), negative up from the bottom (next).
-  var offset by remember { mutableFloatStateOf(0f) }
+  var pull by remember { mutableFloatStateOf(0f) }
   val currentPrevious by rememberUpdatedState(previous)
   val currentNext by rememberUpdatedState(next)
   val currentOnOpen by rememberUpdatedState(onOpen)
-  val progress = min(1f, abs(offset) / threshold)
+  val armed = abs(pull) >= threshold
 
-  LaunchedEffect(progress >= 1f) {
-    if (progress >= 1f) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+  LaunchedEffect(armed) {
+    if (armed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
   }
 
   val connection = remember {
     object : NestedScrollConnection {
-      /** Scrolling back toward the article undoes the pull first. */
+      /** Dragging back toward the article takes back the pull first. */
       override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-        if (source != NestedScrollSource.UserInput || offset == 0f) return Offset.Zero
-        val towardRest = (offset > 0 && available.y < 0) || (offset < 0 && available.y > 0)
-        if (!towardRest) return Offset.Zero
-        val before = offset
-        offset = if (before > 0) max(0f, before + available.y) else min(0f, before + available.y)
-        return Offset(0f, offset - before)
+        if (source != NestedScrollSource.UserInput || pull == 0f) return Offset.Zero
+        val before = pull
+        pull = if (before > 0) (before + available.y).coerceAtLeast(0f) else (before + available.y).coerceAtMost(0f)
+        return Offset(0f, pull - before)
       }
 
-      /** What the article couldn't scroll, at its top or bottom, pulls the page. */
+      /** A drag the article can't scroll, at its top or bottom, pulls. */
       override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
         if (source != NestedScrollSource.UserInput || available.y == 0f) return Offset.Zero
-        val pullingDown = available.y > 0
-        if (pullingDown && currentPrevious == null) return Offset.Zero
-        if (!pullingDown && currentNext == null) return Offset.Zero
-        offset += available.y * Resistance
+        if (available.y > 0 && currentPrevious == null) return Offset.Zero
+        if (available.y < 0 && currentNext == null) return Offset.Zero
+        pull = (pull + available.y / 2).coerceIn(-threshold * 1.5f, threshold * 1.5f)
         return available
       }
 
       override suspend fun onPreFling(available: Velocity): Velocity {
-        if (offset == 0f) return Velocity.Zero
-        val target = if (offset > 0) currentPrevious else currentNext
-        if (abs(offset) >= threshold && target != null) {
+        if (pull == 0f) return Velocity.Zero
+        val target = if (pull > 0) currentPrevious else currentNext
+        if (abs(pull) >= threshold && target != null) {
+          pull = 0f
           currentOnOpen(target.id)
-          offset = 0f
         } else {
-          animate(offset, 0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { value, _ ->
-            offset = value
-          }
+          animate(pull, 0f) { value, _ -> pull = value }
         }
         return available
       }
@@ -113,71 +101,29 @@ fun ArticleSwipe(
 
   Box(modifier.fillMaxSize().nestedScroll(connection)) {
     content()
-    if (offset != 0f) {
-      val pullingDown = offset > 0
-      Droplet(
-        progress = progress,
-        pull = abs(offset),
+    if (pull != 0f) {
+      val fromTop = pull > 0
+      Surface(
+        shape = CircleShape,
+        shadowElevation = 3.dp,
+        color = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = if (armed) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier =
-          Modifier.align(if (pullingDown) Alignment.TopCenter else Alignment.BottomCenter)
-            // Drawn from the top edge; flipped for the bottom.
-            .graphicsLayer { scaleY = if (pullingDown) 1f else -1f },
-      )
-    }
-  }
-}
-
-/** The indicator's circle at full size. */
-private val Radius = 24.dp
-
-/**
- * A circle that grows out of the edge as the pull grows, joined to it by a
- * neck that thins until, at the threshold, the circle drops free and fills
- * with the primary color: the droplet of Android's back gesture, at the
- * top or bottom.
- */
-@Composable
-private fun Droplet(progress: Float, pull: Float, modifier: Modifier) {
-  val armed = progress >= 1f
-  val colors = MaterialTheme.colorScheme
-  val fill = if (armed) colors.primary else colors.secondaryContainer
-  val iconTint = if (armed) colors.onPrimary else colors.onSecondaryContainer
-  val density = LocalDensity.current
-  val radius = with(density) { Radius.toPx() } * (0.5f + 0.5f * progress)
-  // The circle's center, from the edge: it follows the pull, a little behind.
-  val center = min(pull * 0.6f, with(density) { (Threshold * 0.6f).toPx() }) + radius * 0.4f
-  val height = with(density) { (center + radius).toDp() + 8.dp }
-
-  Box(modifier.fillMaxWidth().height(height)) {
-    Canvas(Modifier.matchParentSize()) {
-      val cx = size.width / 2
-      drawCircle(fill, radius, Offset(cx, center))
-      if (!armed) {
-        // The neck: from a base on the edge, curving in to the circle's sides.
-        // Wide where it leaves the edge, pinched in the middle like a drop
-        // about to fall, and pinching more the further it's pulled.
-        val base = radius * (1.8f - 1.0f * progress)
-        val waist = radius * (0.55f - 0.4f * progress)
-        val neck = Path().apply {
-          moveTo(cx - base, 0f)
-          cubicTo(cx - waist, center * 0.25f, cx - waist, center - radius, cx - radius * 0.9f, center)
-          lineTo(cx + radius * 0.9f, center)
-          cubicTo(cx + waist, center - radius, cx + waist, center * 0.25f, cx + base, 0f)
-          close()
-        }
-        drawPath(neck, fill)
+          Modifier.align(if (fromTop) Alignment.TopCenter else Alignment.BottomCenter)
+            .padding(vertical = 16.dp)
+            .size(Size)
+            // Starts hidden past the edge and follows the finger in.
+            .graphicsLayer {
+              val travel = minOf(abs(pull), threshold) - size
+              translationY = if (fromTop) travel else -travel
+            },
+      ) {
+        Icon(
+          if (fromTop) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+          contentDescription = null,
+          modifier = Modifier.padding(8.dp),
+        )
       }
     }
-    Icon(
-      Icons.Default.KeyboardArrowUp,
-      contentDescription = null,
-      tint = iconTint,
-      modifier =
-        Modifier.align(Alignment.TopCenter)
-          .offset { IntOffset(0, (center - radius * 0.6f).toInt()) }
-          .size(with(density) { (radius * 1.2f).toDp() })
-          // Flipped with the rest for the bottom, where it points down.
-          .graphicsLayer { alpha = progress },
-    )
   }
 }

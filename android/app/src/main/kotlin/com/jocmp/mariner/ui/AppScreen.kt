@@ -18,6 +18,7 @@ import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneSt
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -116,14 +117,21 @@ fun AppScreen(model: AppViewModel = viewModel()) {
                 snackbars = snackbars,
               )
             }
-            entry<ReaderKey>(metadata = ListDetailSceneStrategy.detailPane()) { key ->
-              ReaderScreen(
-                model = model,
-                articleId = key.articleId,
-                showBack = !wide,
-                onBack = back,
-                onOpen = openArticle,
-              )
+            // One content key for every article, so moving to the next one
+            // swaps the reader in place instead of crossfading two pages.
+            entry<ReaderKey>(
+              clazzContentKey = { ReaderKey::class.qualifiedName!! },
+              metadata = ListDetailSceneStrategy.detailPane(),
+            ) { reader ->
+              key(reader.articleId) {
+                ReaderScreen(
+                  model = model,
+                  articleId = reader.articleId,
+                  showBack = !wide,
+                  onBack = back,
+                  onOpen = openArticle,
+                )
+              }
             }
           },
       )
