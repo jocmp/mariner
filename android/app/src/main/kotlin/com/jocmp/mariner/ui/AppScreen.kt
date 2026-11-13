@@ -1,5 +1,7 @@
 package com.jocmp.mariner.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
@@ -54,6 +56,12 @@ fun AppScreen(model: AppViewModel = viewModel()) {
   val scope = rememberCoroutineScope()
   val backStack = rememberNavBackStack(ArticlesKey)
   val snackbars = remember { SnackbarHostState() }
+  val activity = LocalActivity.current
+  // The article list is the root: Back there leaves the app, as the stack
+  // can't be empty.
+  val back: () -> Unit = {
+    if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) else activity?.finish()
+  }
 
   LifecycleResumeEffect(Unit) {
     scope.launch { model.reload() }
@@ -85,7 +93,7 @@ fun AppScreen(model: AppViewModel = viewModel()) {
     @Composable {
       NavDisplay(
         backStack = backStack,
-        onBack = { backStack.removeLastOrNull() },
+        onBack = back,
         sceneStrategy = rememberListDetailSceneStrategy<NavKey>(),
         entryProvider =
           entryProvider {
@@ -104,7 +112,7 @@ fun AppScreen(model: AppViewModel = viewModel()) {
                 model = model,
                 articleId = key.articleId,
                 showBack = !wide,
-                onBack = { backStack.removeLastOrNull() },
+                onBack = back,
               )
             }
           },
@@ -118,6 +126,7 @@ fun AppScreen(model: AppViewModel = viewModel()) {
         content()
       }
     } else {
+      BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
       ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = { ModalDrawerSheet { drawer() } },
