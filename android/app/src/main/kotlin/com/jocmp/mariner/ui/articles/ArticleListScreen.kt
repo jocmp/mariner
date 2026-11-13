@@ -59,7 +59,6 @@ import java.time.format.FormatStyle
 fun ArticleListScreen(
   model: AppViewModel,
   selectedArticleId: String?,
-  showMenu: Boolean,
   onMenu: () -> Unit,
   onOpen: (String) -> Unit,
   snackbars: SnackbarHostState,
@@ -69,9 +68,7 @@ fun ArticleListScreen(
       TopAppBar(
         title = { Text(title(model)) },
         navigationIcon = {
-          if (showMenu) {
-            IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, contentDescription = "Feeds") }
-          }
+          IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, contentDescription = "Feeds") }
         },
         actions = { FilterMenu(model) },
       )

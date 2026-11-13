@@ -2,13 +2,12 @@ package com.jocmp.mariner.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.PermanentDrawerSheet
+import androidx.compose.material3.DismissibleDrawerSheet
+import androidx.compose.material3.DismissibleNavigationDrawer
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -52,7 +51,10 @@ fun AppScreen(model: AppViewModel = viewModel()) {
     currentWindowAdaptiveInfo()
       .windowSizeClass
       .isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
+  // Phones slide the feeds over the articles; wide screens push the
+  // articles aside, starting open, and can close it for more room.
   val drawerState = rememberDrawerState(DrawerValue.Closed)
+  val sideDrawerState = rememberDrawerState(DrawerValue.Open)
   val scope = rememberCoroutineScope()
   val backStack = rememberNavBackStack(ArticlesKey)
   val snackbars = remember { SnackbarHostState() }
@@ -101,8 +103,15 @@ fun AppScreen(model: AppViewModel = viewModel()) {
               ArticleListScreen(
                 model = model,
                 selectedArticleId = (backStack.lastOrNull() as? ReaderKey)?.articleId,
-                showMenu = !wide,
-                onMenu = { scope.launch { drawerState.open() } },
+                onMenu = {
+                  scope.launch {
+                    when {
+                      !wide -> drawerState.open()
+                      sideDrawerState.isOpen -> sideDrawerState.close()
+                      else -> sideDrawerState.open()
+                    }
+                  }
+                },
                 onOpen = openArticle,
                 snackbars = snackbars,
               )
@@ -122,8 +131,10 @@ fun AppScreen(model: AppViewModel = viewModel()) {
 
   Surface {
     if (wide) {
-      Row {
-        PermanentDrawerSheet(Modifier.width(300.dp).fillMaxHeight()) { drawer() }
+      DismissibleNavigationDrawer(
+        drawerState = sideDrawerState,
+        drawerContent = { DismissibleDrawerSheet(Modifier.width(300.dp)) { drawer() } },
+      ) {
         content()
       }
     } else {
