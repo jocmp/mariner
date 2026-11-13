@@ -16,7 +16,7 @@ class RefreshWorker(context: Context, parameters: WorkerParameters) : CoroutineW
   override suspend fun doWork(): Result =
     try {
       val app = applicationContext.mariner
-      app.account.await().refresh(null)
+      app.account.await().refresh()
       app.backgroundRefreshes.value += 1
       Result.success()
     } catch (e: Exception) {

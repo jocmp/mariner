@@ -7,8 +7,6 @@ use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::{self, FoundFeed};
 use mariner_feeds::opml::Subscription;
 
-use chrono::{DateTime, Utc};
-
 use super::{Account, AccountDelegate, Status};
 use crate::model::{Feed, FeedChoice, OpmlImport};
 use crate::{Error, Result};
@@ -81,12 +79,10 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for LocalAccountDelegate<F> {
         account.store_subscriptions(subscriptions).await
     }
 
-    /// Fetches every feed that isn't backing off. Read articles that left
-    /// their feed are deleted when stored before `cutoff`.
-    async fn refresh(&self, account: &Account<F>, cutoff: Option<DateTime<Utc>>) -> Result<()> {
-        let cutoff = cutoff.map(|cutoff| cutoff.timestamp());
+    /// Fetches every feed that isn't backing off.
+    async fn refresh(&self, account: &Account<F>) -> Result<()> {
         LocalAccountRefresher::new(&self.fetcher)
-            .refresh(account, cutoff)
+            .refresh(account)
             .await?;
         self.find_missing_favicons(account).await
     }

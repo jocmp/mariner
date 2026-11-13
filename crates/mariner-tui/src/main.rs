@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Imported {} feeds ({} already subscribed); refreshing…",
                 imported.added, imported.existing
             );
-            runtime.block_on(account.refresh(None))?;
+            runtime.block_on(account.refresh())?;
             let unread: usize = runtime.block_on(account.unread_counts())?.values().sum();
             println!("Refreshed; {unread} unread");
             Ok(())
@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some(Command::Refresh) => {
-            runtime.block_on(account.refresh(None))?;
+            runtime.block_on(account.refresh())?;
             let unread: usize = runtime.block_on(account.unread_counts())?.values().sum();
             println!("Refreshed; {unread} unread");
             Ok(())

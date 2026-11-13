@@ -67,7 +67,7 @@ fn imports_without_fetching_then_refreshes() {
             Some("https://daily.example.com/")
         );
 
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let articles = account
             .articles(ArticleFilter::All, &ArticleScope::Tag("News".into()), None)
             .await

@@ -30,10 +30,8 @@ impl<'a, F: Fetch + Send + Sync> LocalAccountRefresher<'a, F> {
         LocalAccountRefresher { fetcher }
     }
 
-    /// Fetches each due feed and stores its new state and entries. Articles
-    /// that left a feed and are read are deleted when stored before
-    /// `cutoff`.
-    pub async fn refresh(&self, account: &Account<F>, cutoff: Option<i64>) -> Result<()> {
+    /// Fetches each due feed and stores its new state and entries.
+    pub async fn refresh(&self, account: &Account<F>) -> Result<()> {
         let now = time::now();
         let feeds = account
             .database()
@@ -42,7 +40,7 @@ impl<'a, F: Fetch + Send + Sync> LocalAccountRefresher<'a, F> {
         stream::iter(feeds)
             .map(|feed| async move {
                 let downloaded = self.download(feed, now).await;
-                store(account, downloaded, cutoff).await
+                store(account, downloaded).await
             })
             .buffer_unordered(CONCURRENCY)
             .try_collect::<()>()
@@ -128,7 +126,7 @@ fn fingerprint(body: &[u8]) -> String {
 }
 
 /// Stores a feed's fetch state and entries in one transaction.
-async fn store<F>(account: &Account<F>, downloaded: Downloaded, cutoff: Option<i64>) -> Result<()> {
+async fn store<F>(account: &Account<F>, downloaded: Downloaded) -> Result<()> {
     account
         .database()
         .write(move |connection| {
@@ -143,7 +141,6 @@ async fn store<F>(account: &Account<F>, downloaded: Downloaded, cutoff: Option<i
                     &feed.feed_url,
                     &parsed.entries,
                     time::now(),
-                    cutoff,
                 )?;
             }
             transaction.commit()

@@ -29,7 +29,7 @@ fn refresh(c: &mut Criterion) {
                 network.serve_generation(1);
                 (dir, account)
             },
-            |(_dir, account)| block_on(account.refresh(None)).unwrap(),
+            |(_dir, account)| block_on(account.refresh()).unwrap(),
             BatchSize::PerIteration,
         );
     });

@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use mariner_core::{Database, Kind};
 
@@ -76,10 +75,10 @@ impl Account {
             .collect())
     }
 
-    /// Fetches new and changed articles, and deletes ones that left their
-    /// feed: after 30 days, or sooner when read and stored before `cutoff`.
-    pub async fn refresh(&self, cutoff: Option<SystemTime>) -> Result<()> {
-        Ok(self.account.refresh(cutoff.map(Into::into)).await?)
+    /// Fetches new and changed articles, and deletes read, unstarred ones
+    /// that left their feed 90 days after they arrived.
+    pub async fn refresh(&self) -> Result<()> {
+        Ok(self.account.refresh().await?)
     }
 
     /// The feeds `url` leads to, to pick one to subscribe to. `url` can be

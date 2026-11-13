@@ -42,7 +42,7 @@ pub(super) async fn subscribe(
                 feeds::INSERT_FEED,
                 params![id, title, url, site_url, feed.itunes_image],
             )?;
-            articles::store(&transaction, &id, &url, &feed.entries, time::now(), None)?;
+            articles::store(&transaction, &id, &url, &feed.entries, time::now())?;
             let stored = queries::feed(&transaction, &id)?;
             transaction.commit()?;
             Ok(stored.expect("just inserted"))

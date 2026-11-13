@@ -120,7 +120,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     if (isRefreshing) return
     viewModelScope.launch {
       isRefreshing = true
-      attempt { account().refresh(null) }
+      attempt { account().refresh() }
       reload()
       isRefreshing = false
     }

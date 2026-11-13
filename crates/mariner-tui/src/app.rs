@@ -723,10 +723,7 @@ impl<'a> App<'a> {
             return;
         }
         let account = Arc::clone(&self.account);
-        self.refreshing = Some(
-            self.runtime
-                .spawn(async move { account.refresh(None).await }),
-        );
+        self.refreshing = Some(self.runtime.spawn(async move { account.refresh().await }));
         self.status = "Refreshing…".into();
     }
 

@@ -84,7 +84,7 @@ final class AppModel {
         isRefreshing = true
         defer { isRefreshing = false }
         do {
-            try await account.refresh(cutoff: nil)
+            try await account.refresh()
         } catch {
             show(error)
         }

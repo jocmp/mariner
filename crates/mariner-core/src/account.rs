@@ -6,7 +6,6 @@
 //! feeds, fetching them, telling a sync service about changes) it reaches
 //! out to its delegate.
 
-use chrono::{DateTime, Utc};
 use mariner_feeds::fetch::Fetch;
 use mariner_feeds::finder::FoundFeed;
 use mariner_feeds::opml::{self, Subscription};
@@ -58,12 +57,11 @@ impl<F: Fetch + Send + Sync> Account<F> {
         queries::feeds(&self.database).await
     }
 
-    /// Fetches new and changed articles, and deletes ones that left their
-    /// feed: after 30 days, or sooner when read and stored before `cutoff`.
-    /// Then forgets deleted articles' statuses once they're old enough not
-    /// to be needed.
-    pub async fn refresh(&self, cutoff: Option<DateTime<Utc>>) -> Result<()> {
-        self.delegate.refresh(self, cutoff).await?;
+    /// Fetches new and changed articles, and deletes read, unstarred ones
+    /// that left their feed 90 days after they arrived. Then forgets
+    /// deleted articles' statuses once they're old enough not to be needed.
+    pub async fn refresh(&self) -> Result<()> {
+        self.delegate.refresh(self).await?;
         let before = time::now() - articles::TOMBSTONE_LIFETIME;
         articles::delete_old_tombstones(&self.database, before).await?;
         Ok(self.database.optimize().await?)
@@ -248,9 +246,9 @@ enum Delegate<F> {
 }
 
 impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
-    async fn refresh(&self, account: &Account<F>, cutoff: Option<DateTime<Utc>>) -> Result<()> {
+    async fn refresh(&self, account: &Account<F>) -> Result<()> {
         match self {
-            Delegate::Local(delegate) => delegate.refresh(account, cutoff).await,
+            Delegate::Local(delegate) => delegate.refresh(account).await,
         }
     }
 
@@ -333,14 +331,8 @@ impl<F: Fetch + Send + Sync> AccountDelegate<F> for Delegate<F> {
 /// outbox (`article_sync_statuses`) here and pushes the outbox at the
 /// start of its next refresh, before pulling, so local changes win.
 pub(crate) trait AccountDelegate<F> {
-    /// Brings in new articles. `cutoff` is when the account will prune
-    /// read articles to, so a sync account can skip storing ones it would
-    /// prune right away.
-    fn refresh(
-        &self,
-        account: &Account<F>,
-        cutoff: Option<DateTime<Utc>>,
-    ) -> impl Future<Output = Result<()>> + Send;
+    /// Brings in new articles.
+    fn refresh(&self, account: &Account<F>) -> impl Future<Output = Result<()>> + Send;
 
     /// The feeds `url` leads to, without subscribing.
     fn find_feeds(

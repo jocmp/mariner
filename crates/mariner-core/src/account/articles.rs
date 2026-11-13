@@ -5,6 +5,8 @@
 //! - Updating an article leaves its status alone, so a read article stays
 //!   read.
 //! - Items published more than [`STALE_AFTER`] ago start out read.
+//! - Articles that left their feed go once read, unstarred and
+//!   [`KEEP_READ_FOR`] after arriving; unread ones stay until read.
 //! - Deleting an article keeps its status as a tombstone, so it isn't added
 //!   again while the feed still lists it. Tombstones go after
 //!   [`TOMBSTONE_LIFETIME`], by which time the article has left the feed.
@@ -21,8 +23,8 @@ use crate::sql::account::{articles, statuses};
 const DAY: i64 = 24 * 60 * 60;
 /// Items published longer ago than this start out read (about 6 months).
 pub(super) const STALE_AFTER: i64 = 183 * DAY;
-/// Articles that left their feed are kept this long after arriving.
-pub(super) const KEEP_AFTER_LEAVING: i64 = 30 * DAY;
+/// Read articles that left their feed are kept this long after arriving.
+pub(super) const KEEP_READ_FOR: i64 = 90 * DAY;
 /// How long a local account keeps a deleted article's status.
 pub(super) const TOMBSTONE_LIFETIME: i64 = 30 * DAY;
 
@@ -38,8 +40,8 @@ pub(crate) struct Changes {
 /// - new entries become articles, unread unless stale, with their
 ///   enclosures (skipping tombstoned ones);
 /// - stored articles whose fields changed are updated;
-/// - unstarred articles no longer in the feed are deleted once they arrived
-///   [`KEEP_AFTER_LEAVING`] ago, or, when read, before `cutoff`.
+/// - read, unstarred articles no longer in the feed are deleted once they
+///   arrived [`KEEP_READ_FOR`] ago.
 ///
 /// A feed with no entries deletes nothing, in case it's only briefly empty.
 pub(super) fn store(
@@ -48,7 +50,6 @@ pub(super) fn store(
     feed_url: &str,
     entries: &[Entry],
     now: i64,
-    cutoff: Option<i64>,
 ) -> rusqlite::Result<Changes> {
     let mut changes = Changes::default();
     let stored = stored_fields(transaction, feed_id)?;
@@ -86,7 +87,7 @@ pub(super) fn store(
         let listed = serde_json::to_string(&ids).expect("strings serialize");
         changes.deleted = transaction
             .prepare_cached(articles::DELETE_ARTICLES_GONE_FROM_FEED)?
-            .execute(params![feed_id, listed, now - KEEP_AFTER_LEAVING, cutoff])?;
+            .execute(params![feed_id, listed, now - KEEP_READ_FOR])?;
     }
     Ok(changes)
 }

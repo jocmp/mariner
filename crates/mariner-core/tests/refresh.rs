@@ -26,7 +26,7 @@ fn stores_new_articles() {
         account.subscribe(FEED_URL, None).await.unwrap();
 
         network.respond(FEED_URL, 200, &[], &rss(&["2", "1"]));
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(titles(&account).await, ["1", "2"]);
     });
 }
@@ -46,11 +46,11 @@ fn sends_conditional_headers_and_skips_not_modified() {
         );
         let (_dir, account) = local_account(&network).await;
         account.subscribe(FEED_URL, None).await.unwrap();
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
 
         network.clear_requests();
         network.respond(FEED_URL, 304, &[], "");
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let request = &network.requests()[0];
         assert_eq!(
             request.headers,
@@ -72,13 +72,13 @@ fn skips_an_unchanged_body() {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
         account.subscribe(FEED_URL, None).await.unwrap();
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let fingerprint = crawl(&account).await.fingerprint;
         assert!(fingerprint.is_some());
 
         // A pruned article would come back if the body were parsed again.
         delete_articles(&account).await;
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert!(titles(&account).await.is_empty());
         assert_eq!(crawl(&account).await.fingerprint, fingerprint);
     });
@@ -92,7 +92,7 @@ fn backs_off_a_failing_feed() {
         account.subscribe(FEED_URL, None).await.unwrap();
 
         network.respond(FEED_URL, 503, &[("Retry-After", "60")], "");
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let state = crawl(&account).await;
         assert_eq!(state.error_count, 1);
         assert_eq!(state.last_error_kind.as_deref(), Some("server_error"));
@@ -100,7 +100,7 @@ fn backs_off_a_failing_feed() {
         assert!(state.retry_after.unwrap() > state.failed_at.unwrap() + 4000);
 
         network.clear_requests();
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert!(network.requests().is_empty(), "skipped while backing off");
     });
 }
@@ -118,7 +118,7 @@ fn records_network_errors_and_feeds_that_stop_being_feeds() {
 
         network.unreachable(FEED_URL);
         network.respond(other, 200, &[], "<html><body>Moved</body></html>");
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
 
         let kinds = error_kinds(&account).await;
         assert_eq!(
@@ -142,10 +142,10 @@ fn trusts_a_permanent_redirect_after_five_sightings() {
         network.redirect(FEED_URL, 301, moved);
         for refresh in 1..=5 {
             network.respond(moved, 200, &[], &rss(&["1", &format!("r{refresh}")]));
-            account.refresh(None).await.unwrap();
+            account.refresh().await.unwrap();
         }
         network.clear_requests();
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(network.requested_urls(), [moved]);
 
         let feeds = account.feeds().await.unwrap();
@@ -169,28 +169,37 @@ fn updates_changed_articles_and_keeps_their_status() {
 
         let edited = rss(&["1"]).replace("<title>1</title>", "<title>1, edited</title>");
         network.respond(FEED_URL, 200, &[], &edited);
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(titles(&account).await, ["1, edited"]);
         assert_eq!(read_ids(&account).await, [id]);
     });
 }
 
 #[test]
-fn deletes_articles_that_left_the_feed_after_30_days() {
+fn deletes_read_articles_that_left_the_feed_after_90_days() {
     block_on(async {
-        let network =
-            Network::default().with(FEED_URL, &rss(&["old", "recent", "starred", "listed"]));
+        let network = Network::default().with(
+            FEED_URL,
+            &rss(&["old", "recent", "unread", "starred", "listed"]),
+        );
         let (_dir, account) = local_account(&network).await;
         account.subscribe(FEED_URL, None).await.unwrap();
         let ids = article_ids(&account).await;
+        let read: Vec<String> = ["old", "recent", "starred", "listed"]
+            .iter()
+            .map(|title| ids[*title].clone())
+            .collect();
+        account.mark_read(&read).await.unwrap();
         account.add_star(&[ids["starred"].clone()]).await.unwrap();
-        arrived_days_ago(&account, &["old", "starred", "listed"], 31).await;
+        arrived_days_ago(&account, &["old", "unread", "starred", "listed"], 91).await;
+        arrived_days_ago(&account, &["recent"], 89).await;
 
         network.respond(FEED_URL, 200, &[], &rss(&["listed", "new"]));
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(
             titles(&account).await,
-            ["listed", "new", "recent", "starred"]
+            ["listed", "new", "recent", "starred", "unread"],
+            "only the old, read, unstarred article that left goes"
         );
     });
 }
@@ -201,30 +210,15 @@ fn an_empty_feed_deletes_nothing() {
         let network = Network::default().with(FEED_URL, &rss(&["1"]));
         let (_dir, account) = local_account(&network).await;
         account.subscribe(FEED_URL, None).await.unwrap();
-        arrived_days_ago(&account, &["1"], 31).await;
-
-        network.respond(FEED_URL, 200, &[], &rss(&[]));
-        account.refresh(None).await.unwrap();
-        assert_eq!(titles(&account).await, ["1"]);
-    });
-}
-
-#[test]
-fn the_cutoff_deletes_read_articles_once_they_leave_the_feed() {
-    block_on(async {
-        let network = Network::default().with(FEED_URL, &rss(&["read", "unread", "listed"]));
-        let (_dir, account) = local_account(&network).await;
-        account.subscribe(FEED_URL, None).await.unwrap();
-        let ids = article_ids(&account).await;
         account
-            .mark_read(&[ids["read"].clone(), ids["listed"].clone()])
+            .mark_read(&[article_ids(&account).await["1"].clone()])
             .await
             .unwrap();
+        arrived_days_ago(&account, &["1"], 91).await;
 
-        network.respond(FEED_URL, 200, &[], &rss(&["listed"]));
-        let tomorrow = chrono::Utc::now() + chrono::Duration::days(1);
-        account.refresh(Some(tomorrow)).await.unwrap();
-        assert_eq!(titles(&account).await, ["listed", "unread"]);
+        network.respond(FEED_URL, 200, &[], &rss(&[]));
+        account.refresh().await.unwrap();
+        assert_eq!(titles(&account).await, ["1"]);
     });
 }
 
@@ -234,9 +228,14 @@ fn tombstones_keep_deleted_articles_out_until_they_expire() {
         let network = Network::default().with(FEED_URL, &rss(&["1", "2"]));
         let (_dir, account) = local_account(&network).await;
         account.subscribe(FEED_URL, None).await.unwrap();
-        arrived_days_ago(&account, &["1", "2"], 31).await;
+        let ids = article_ids(&account).await;
+        account
+            .mark_read(&[ids["1"].clone(), ids["2"].clone()])
+            .await
+            .unwrap();
+        arrived_days_ago(&account, &["1", "2"], 91).await;
         network.respond(FEED_URL, 200, &[], &rss(&["3"]));
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(titles(&account).await, ["3"]);
         assert_eq!(
             status_count(&account).await,
@@ -246,13 +245,13 @@ fn tombstones_keep_deleted_articles_out_until_they_expire() {
 
         // Tombstones keep the deleted articles out if the feed lists them again.
         network.respond(FEED_URL, 200, &[], &rss(&["1", "3"]));
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(titles(&account).await, ["3"]);
 
         // A month on, unchanged tombstones are forgotten.
         status_changed_days_ago(&account, 31).await;
         network.respond(FEED_URL, 200, &[], &rss(&["3", "4"]));
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         assert_eq!(status_count(&account).await, 2, "the statuses of 3 and 4");
     });
 }
@@ -426,7 +425,7 @@ fn takes_the_feeds_new_title_and_site() {
             &[],
             r#"<rss version="2.0"><channel><title>Renamed</title><link>https://example.org/</link><item><guid>1</guid></item></channel></rss>"#,
         );
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let feed = &account.feeds().await.unwrap()[0];
         assert_eq!(feed.title, "Renamed");
         assert_eq!(feed.site_url.as_deref(), Some("https://example.org/"));
@@ -437,7 +436,7 @@ fn takes_the_feeds_new_title_and_site() {
             &[],
             r#"<rss version="2.0"><channel><title> </title><item><guid>2</guid></item></channel></rss>"#,
         );
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let feed = &account.feeds().await.unwrap()[0];
         assert_eq!(feed.title, "Renamed", "a blank title keeps the stored one");
         assert_eq!(feed.site_url.as_deref(), Some("https://example.org/"));
@@ -459,7 +458,7 @@ fn finds_icons_for_feeds_that_have_none() {
             .await
             .unwrap();
 
-        account.refresh(None).await.unwrap();
+        account.refresh().await.unwrap();
         let feed = &account.feeds().await.unwrap()[0];
         assert_eq!(
             feed.favicon_url.as_deref(),
