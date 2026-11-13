@@ -46,22 +46,18 @@ impl Account {
         Ok(into_all(self.account.tags().await?))
     }
 
-    /// A page of articles in `scope`, newest first.
+    /// Every article in `scope` that `filter` keeps, newest first. `keep`
+    /// is listed even when `filter` would leave it out, so the open article
+    /// stays put after it's read or unstarred.
     pub async fn articles(
         &self,
         filter: ArticleFilter,
         scope: ArticleScope,
-        limit: u32,
-        offset: u32,
+        keep: Option<String>,
     ) -> Result<Vec<Article>> {
         let articles = self
             .account
-            .articles(
-                filter.into(),
-                &scope.into(),
-                limit as usize,
-                offset as usize,
-            )
+            .articles(filter.into(), &scope.into(), keep.as_deref())
             .await?;
         Ok(into_all(articles))
     }

@@ -16,6 +16,7 @@ import com.jocmp.mariner.ffi.FeedChoice
 import com.jocmp.mariner.ffi.OpmlImport
 import com.jocmp.mariner.ffi.Tag
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /** What the drawer selects. */
@@ -64,15 +65,36 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   /** An error to show once, then clear. */
   var message by mutableStateOf<String?>(null)
 
+  /**
+   * The article the reader shows, if any. A refresh keeps it listed even
+   * when the filter would leave it out.
+   */
+  var openArticleId: String? = null
+
   /** Full texts extracted this session, by article id. */
   private val fullTexts = mutableMapOf<String, String?>()
 
   init {
     viewModelScope.launch { reload() }
+    // A background refresh counts as a refresh.
+    viewModelScope.launch {
+      getApplication<MarinerApplication>().backgroundRefreshes.drop(1).collect { reload() }
+    }
   }
 
-  /** Reloads feeds, folders, counts and the article list. */
+  /**
+   * Reloads feeds, folders, counts and the article list from the database.
+   * In between, the list only changes in place. The open article stays
+   * listed.
+   */
   suspend fun reload() {
+    reloadFeeds()
+    loadArticles(keep = openArticleId)
+    isLoaded = true
+  }
+
+  /** Reloads feeds, folders and counts, leaving the article list alone. */
+  suspend fun reloadFeeds() {
     attempt {
       val account = account()
       feeds = account.feeds()
@@ -80,18 +102,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       folders = account.tags().filter { it.name in tagged }
       unreadCounts = account.unreadCounts().mapValues { it.value.toLong() }
     }
-    loadArticles()
-    isLoaded = true
   }
 
+  /** Lists `item`'s articles. The caller closes the open article. */
   fun select(item: SidebarItem) {
     selection = item
-    viewModelScope.launch { loadArticles() }
+    viewModelScope.launch { loadArticles(keep = null) }
   }
 
+  /** Lists the articles `filter` keeps. The caller closes the open article. */
   fun changeFilter(filter: ArticleFilter) {
     this.filter = filter
-    viewModelScope.launch { loadArticles() }
+    viewModelScope.launch { loadArticles(keep = null) }
   }
 
   fun refresh() {
@@ -241,8 +263,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
   suspend fun exportOpml(): String = account().exportOpml()
 
-  private suspend fun loadArticles() {
-    attempt { articles = account().articles(filter, selection.scope, 500u, 0u) }
+  private suspend fun loadArticles(keep: String?) {
+    attempt { articles = account().articles(filter, selection.scope, keep) }
   }
 
   private suspend fun account(): Account = getApplication<MarinerApplication>().account.await()

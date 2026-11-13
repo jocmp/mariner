@@ -24,7 +24,9 @@ struct ContentView: View {
             model.selectedArticleID = nil
             Task { await model.loadArticles() }
         }
+        // Switching the filter, like the selection, closes the article.
         .onChange(of: model.filter) {
+            model.selectedArticleID = nil
             Task { await model.loadArticles() }
         }
         .alert(

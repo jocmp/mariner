@@ -18,6 +18,7 @@ import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneSt
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,10 +67,14 @@ fun AppScreen(model: AppViewModel = viewModel()) {
     if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) else activity?.finish()
   }
 
+  // Coming back only updates counts; the article list changes on a
+  // refresh or a switch.
   LifecycleResumeEffect(Unit) {
-    scope.launch { model.reload() }
+    scope.launch { model.reloadFeeds() }
     onPauseOrDispose {}
   }
+  val openId = (backStack.lastOrNull() as? ReaderKey)?.articleId
+  SideEffect { model.openArticleId = openId }
   LaunchedEffect(model.message) {
     model.message?.let {
       snackbars.showSnackbar(it)
@@ -77,6 +82,10 @@ fun AppScreen(model: AppViewModel = viewModel()) {
     }
   }
 
+  val closeArticle: () -> Unit = {
+    while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+    model.openArticleId = null
+  }
   val openArticle: (String) -> Unit = { id ->
     if (backStack.lastOrNull() is ReaderKey) backStack.removeAt(backStack.lastIndex)
     backStack.add(ReaderKey(id))
@@ -86,8 +95,8 @@ fun AppScreen(model: AppViewModel = viewModel()) {
       FeedDrawer(
         model = model,
         onSelect = {
+          closeArticle()
           model.select(it)
-          while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
           if (!wide) scope.launch { drawerState.close() }
         },
       )
@@ -114,6 +123,10 @@ fun AppScreen(model: AppViewModel = viewModel()) {
                   }
                 },
                 onOpen = openArticle,
+                onFilter = {
+                  closeArticle()
+                  model.changeFilter(it)
+                },
                 snackbars = snackbars,
               )
             }

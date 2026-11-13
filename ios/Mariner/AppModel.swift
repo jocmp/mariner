@@ -49,7 +49,8 @@ final class AppModel {
         }
     }
 
-    /// Reloads feeds, folders, counts and the article list.
+    /// Reloads feeds, folders, counts and the article list from the
+    /// database. In between, the list only changes in place.
     func reload() async {
         guard let account else { return }
         do {
@@ -63,14 +64,15 @@ final class AppModel {
         await loadArticles()
     }
 
+    /// Lists every article in the selection that the filter keeps. The open
+    /// article stays listed even when the filter would leave it out.
     func loadArticles() async {
         guard let account else { return }
         do {
             articles = try await account.articles(
                 filter: filter,
                 scope: (selection ?? .all).scope,
-                limit: 500,
-                offset: 0
+                keep: selectedArticleID
             )
         } catch {
             show(error)

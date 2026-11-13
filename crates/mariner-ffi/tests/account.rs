@@ -97,7 +97,7 @@ fn adds_a_feed_through_a_redirect_and_lists_its_articles() {
     let scope = ArticleScope::Feed {
         id: feed.id.clone(),
     };
-    let articles = block_on(account.articles(ArticleFilter::Unread, scope.clone(), 10, 0)).unwrap();
+    let articles = block_on(account.articles(ArticleFilter::Unread, scope.clone(), None)).unwrap();
     assert_eq!(articles.len(), 1);
     assert_eq!(articles[0].title.as_deref(), Some("First"));
 

@@ -18,6 +18,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.OkHttpClient
 import okio.Path.Companion.toOkioPath
 
@@ -43,6 +44,9 @@ class MarinerApplication : Application(), SingletonImageLoader.Factory {
       Account.local(path, OkHttpHttpClient(client, userAgent()))
     }
   }
+
+  /** Counts background refreshes, so the article list can follow them. */
+  val backgroundRefreshes = MutableStateFlow(0)
 
   override fun onCreate() {
     super.onCreate()

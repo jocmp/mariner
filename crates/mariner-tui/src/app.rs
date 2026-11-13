@@ -21,9 +21,6 @@ use crate::images::Images;
 use crate::reader::{self, LinkRange, Part};
 use crate::{LocalAccount, halfblock, ui};
 
-/// Articles loaded into the list at once.
-const PAGE: usize = 500;
-
 /// Runs the reader until the user quits.
 pub fn run(
     runtime: &Runtime,
@@ -487,10 +484,15 @@ impl<'a> App<'a> {
         if let Some(row) = row {
             self.feed_list.select(Some(row));
             self.article_list.select(None);
+            self.close_article();
             self.load_articles();
         }
     }
 
+    /// Lists every article in the selected feed or folder from the
+    /// database. Until the next refresh or switch, the list only changes in
+    /// place, and the open article stays listed even when the filter would
+    /// leave it out.
     fn load_articles(&mut self) {
         let scope = self.scope();
         let selected_id = self
@@ -498,9 +500,10 @@ impl<'a> App<'a> {
             .selected()
             .and_then(|row| self.articles.get(row))
             .map(|article| article.id.clone());
-        let articles = self
-            .runtime
-            .block_on(self.account.articles(self.filter, &scope, PAGE, 0));
+        let open = self.reader.as_ref().map(|reader| reader.article.id.clone());
+        let articles =
+            self.runtime
+                .block_on(self.account.articles(self.filter, &scope, open.as_deref()));
         match articles {
             Ok(articles) => self.articles = articles,
             Err(error) => self.status = error.to_string(),
@@ -522,6 +525,7 @@ impl<'a> App<'a> {
                 if Some(row) != self.feed_list.selected() {
                     self.feed_list.select(Some(row));
                     self.article_list.select(None);
+                    self.close_article();
                     self.load_articles();
                 }
             }
@@ -576,7 +580,16 @@ impl<'a> App<'a> {
             ArticleFilter::Starred => ArticleFilter::Unread,
         };
         self.article_list.select(None);
+        self.close_article();
         self.load_articles();
+    }
+
+    /// Closes the reader, as switching the filter, feed or folder does.
+    fn close_article(&mut self) {
+        self.reader = None;
+        if self.focus == Pane::Reader {
+            self.focus = Pane::Articles;
+        }
     }
 
     /// Shows the selected article and marks it read.
@@ -1490,6 +1503,37 @@ mod tests {
 
     fn click(app: &mut App, column: u16, row: u16) {
         mouse(app, MouseEventKind::Down(MouseButton::Left), column, row);
+    }
+
+    #[test]
+    fn reloading_drops_read_articles_but_the_open_one_and_switching_closes_it() {
+        let runtime = Runtime::new().unwrap();
+        let dir = tempfile_dir();
+        let mut app = app(&runtime, dir.path());
+        assert_eq!(app.filter, ArticleFilter::Unread);
+        let ids =
+            |app: &App| -> Vec<String> { app.articles.iter().map(|a| a.id.clone()).collect() };
+
+        app.article_list.select(Some(0));
+        app.open_article();
+        app.article_list.select(Some(1));
+        app.open_article();
+        assert_eq!(ids(&app), ["a", "b"], "reading changes the list in place");
+
+        app.reload();
+        assert_eq!(
+            ids(&app),
+            ["b"],
+            "a refresh drops read articles but the open one"
+        );
+
+        app.cycle_filter();
+        assert!(
+            app.reader.is_none(),
+            "switching the filter closes the article"
+        );
+        assert_eq!(app.focus, Pane::Articles);
+        assert_eq!(ids(&app), ["a", "b"]);
     }
 
     #[test]

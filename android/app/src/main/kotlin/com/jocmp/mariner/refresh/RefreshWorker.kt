@@ -15,7 +15,9 @@ import java.util.concurrent.TimeUnit
 class RefreshWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
   override suspend fun doWork(): Result =
     try {
-      applicationContext.mariner.account.await().refresh(null)
+      val app = applicationContext.mariner
+      app.account.await().refresh(null)
+      app.backgroundRefreshes.value += 1
       Result.success()
     } catch (e: Exception) {
       Result.retry()

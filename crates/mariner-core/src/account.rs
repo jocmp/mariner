@@ -74,15 +74,16 @@ impl<F: Fetch + Send + Sync> Account<F> {
         queries::tags(&self.database).await
     }
 
-    /// A page of articles in `scope`, newest first.
+    /// Every article in `scope` that `filter` keeps, newest first. `keep`
+    /// is listed even when `filter` would leave it out, so the open article
+    /// stays put after it's read or unstarred.
     pub async fn articles(
         &self,
         filter: ArticleFilter,
         scope: &ArticleScope,
-        limit: usize,
-        offset: usize,
+        keep: Option<&str>,
     ) -> Result<Vec<Article>> {
-        queries::articles(&self.database, filter, scope, limit, offset).await
+        queries::articles(&self.database, filter, scope, keep).await
     }
 
     /// One article with its content.

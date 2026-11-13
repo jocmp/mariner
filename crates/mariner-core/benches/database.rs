@@ -1,5 +1,5 @@
-//! Database benchmarks: a refresh's worth of new articles, a page of the
-//! unread list, marking everything read, and importing and exporting a
+//! Database benchmarks: a refresh's worth of new articles, the whole
+//! article list, marking everything read, and importing and exporting a
 //! subscription list. Driven by a minimal executor,
 //! like the app's would be, with no network.
 
@@ -14,7 +14,7 @@ use mariner_feeds::fetch::{Fetch, FetchError, Request, Response};
 const FEEDS: usize = 50;
 const ITEMS_PER_FEED: usize = 20;
 
-criterion_group!(benches, refresh, unread_page, mark_all_read, opml);
+criterion_group!(benches, refresh, article_list, mark_all_read, opml);
 criterion_main!(benches);
 
 /// 50 subscribed feeds, each serving 20 items it hasn't served before.
@@ -36,19 +36,19 @@ fn refresh(c: &mut Criterion) {
     group.finish();
 }
 
-/// 10,000 articles, a fifth of them read.
-fn unread_page(c: &mut Criterion) {
-    let (_dir, account) = block_on(seeded(10_000, 5));
-    let mut group = c.benchmark_group("unread list of 10,000");
-    group.bench_function("first page of 50", |b| {
+/// 50,000 articles, a fifth of them read, listed whole as the apps do.
+fn article_list(c: &mut Criterion) {
+    let (_dir, account) = block_on(seeded(50_000, 5));
+    let mut group = c.benchmark_group("article list of 50,000");
+    group.sample_size(20);
+    group.bench_function("every article", |b| {
         b.iter(|| {
-            block_on(account.articles(ArticleFilter::Unread, &ArticleScope::All, 50, 0)).unwrap()
+            block_on(account.articles(ArticleFilter::All, &ArticleScope::All, None)).unwrap()
         });
     });
-    group.bench_function("page of 50 at offset 5,000", |b| {
+    group.bench_function("every unread article", |b| {
         b.iter(|| {
-            block_on(account.articles(ArticleFilter::Unread, &ArticleScope::All, 50, 5_000))
-                .unwrap()
+            block_on(account.articles(ArticleFilter::Unread, &ArticleScope::All, None)).unwrap()
         });
     });
     group.finish();

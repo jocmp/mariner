@@ -33,29 +33,34 @@ pub(crate) async fn tags(database: &Database) -> Result<Vec<Tag>> {
         .await?)
 }
 
-/// A page of articles in `scope`, newest first.
+/// Every article in `scope` that `filter` keeps, plus `keep` if it's in
+/// `scope`, newest first.
 pub(crate) async fn articles(
     database: &Database,
     filter: ArticleFilter,
     scope: &ArticleScope,
-    limit: usize,
-    offset: usize,
+    keep: Option<&str>,
 ) -> Result<Vec<Article>> {
     let (feed_id, tag) = scope.feed_and_tag();
-    let sql = match filter {
-        ArticleFilter::All => article_list::SELECT_ARTICLES,
-        ArticleFilter::Unread => article_list::SELECT_UNREAD_ARTICLES,
-        ArticleFilter::Starred => article_list::SELECT_STARRED_ARTICLES,
-    };
+    let keep = keep.map(str::to_string);
     Ok(database
         .read(move |connection| {
-            connection
-                .prepare_cached(sql)?
-                .query_map(
-                    params![feed_id, limit as i64, offset as i64, tag],
-                    article_row,
-                )?
-                .collect()
+            let mut statement;
+            let rows = match filter {
+                ArticleFilter::All => {
+                    statement = connection.prepare_cached(article_list::SELECT_ARTICLES)?;
+                    statement.query_map(params![feed_id, tag], article_row)?
+                }
+                ArticleFilter::Unread => {
+                    statement = connection.prepare_cached(article_list::SELECT_UNREAD_ARTICLES)?;
+                    statement.query_map(params![feed_id, tag, keep], article_row)?
+                }
+                ArticleFilter::Starred => {
+                    statement = connection.prepare_cached(article_list::SELECT_STARRED_ARTICLES)?;
+                    statement.query_map(params![feed_id, tag, keep], article_row)?
+                }
+            };
+            rows.collect()
         })
         .await?)
 }

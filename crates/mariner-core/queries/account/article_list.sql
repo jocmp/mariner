@@ -1,5 +1,7 @@
--- Listing articles, newest first. ?1 is a feed id and ?4 a tag name, either
--- NULL for no limit; ?2 and ?3 are the limit and offset.
+-- Listing every article in a scope, newest first. ?1 is a feed id and ?2 a
+-- tag name, either NULL for no limit. ?3 is an article to list even when
+-- the filter would leave it out (the open one), or NULL; listing them all
+-- needs none.
 
 -- name: select_articles
 SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
@@ -7,29 +9,26 @@ SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
 FROM articles a
 LEFT JOIN article_statuses s ON s.article_id = a.id
 WHERE (?1 IS NULL OR a.feed_id = ?1)
-  AND (?4 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?4))
-ORDER BY a.published_at DESC, a.id
-LIMIT ?2 OFFSET ?3;
+  AND (?2 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?2))
+ORDER BY a.published_at DESC, a.id;
 
 -- name: select_unread_articles
 SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
        a.published_at, s.read, s.starred
 FROM articles a
 JOIN article_statuses s ON s.article_id = a.id
-WHERE s.read = 0 AND (?1 IS NULL OR a.feed_id = ?1)
-  AND (?4 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?4))
-ORDER BY a.published_at DESC, a.id
-LIMIT ?2 OFFSET ?3;
+WHERE (s.read = 0 OR a.id = ?3) AND (?1 IS NULL OR a.feed_id = ?1)
+  AND (?2 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?2))
+ORDER BY a.published_at DESC, a.id;
 
 -- name: select_starred_articles
 SELECT a.id, a.feed_id, a.title, a.author, a.url, a.summary, a.image_url,
        a.published_at, s.read, s.starred
 FROM articles a
 JOIN article_statuses s ON s.article_id = a.id
-WHERE s.starred = 1 AND (?1 IS NULL OR a.feed_id = ?1)
-  AND (?4 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?4))
-ORDER BY a.published_at DESC, a.id
-LIMIT ?2 OFFSET ?3;
+WHERE (s.starred = 1 OR a.id = ?3) AND (?1 IS NULL OR a.feed_id = ?1)
+  AND (?2 IS NULL OR a.feed_id IN (SELECT feed_id FROM taggings WHERE name = ?2))
+ORDER BY a.published_at DESC, a.id;
 
 -- name: select_unread_article_ids
 -- Every unread article's id, for marking them all read. ?1 is a feed id and

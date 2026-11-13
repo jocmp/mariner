@@ -61,6 +61,7 @@ fun ArticleListScreen(
   selectedArticleId: String?,
   onMenu: () -> Unit,
   onOpen: (String) -> Unit,
+  onFilter: (ArticleFilter) -> Unit,
   snackbars: SnackbarHostState,
 ) {
   Scaffold(
@@ -70,7 +71,7 @@ fun ArticleListScreen(
         navigationIcon = {
           IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, contentDescription = "Feeds") }
         },
-        actions = { FilterMenu(model) },
+        actions = { FilterMenu(model, onFilter) },
       )
     },
     snackbarHost = { SnackbarHost(snackbars) },
@@ -106,7 +107,7 @@ private fun title(model: AppViewModel): String =
   }
 
 @Composable
-private fun FilterMenu(model: AppViewModel) {
+private fun FilterMenu(model: AppViewModel, onFilter: (ArticleFilter) -> Unit) {
   var open by remember { mutableStateOf(false) }
   IconButton(onClick = { open = true }) { Icon(Icons.Default.FilterList, contentDescription = "Filter") }
   DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -117,7 +118,7 @@ private fun FilterMenu(model: AppViewModel) {
           leadingIcon = { if (model.filter == filter) Icon(Icons.Default.Check, contentDescription = null) },
           onClick = {
             open = false
-            model.changeFilter(filter)
+            onFilter(filter)
           },
         )
       }

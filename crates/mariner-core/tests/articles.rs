@@ -36,23 +36,17 @@ async fn two_feeds() -> (tempfile::TempDir, Account<Network>, Feed) {
 }
 
 #[test]
-fn lists_articles_newest_first_in_pages() {
+fn lists_every_article_newest_first() {
     block_on(async {
         let (_dir, account, _) = two_feeds().await;
         let titles = |articles: Vec<mariner_core::Article>| -> Vec<String> {
             articles.into_iter().filter_map(|a| a.title).collect()
         };
         let all = account
-            .articles(ArticleFilter::All, &ArticleScope::All, 10, 0)
+            .articles(ArticleFilter::All, &ArticleScope::All, None)
             .await
             .unwrap();
         assert_eq!(titles(all), ["n1", "n2", "n3", "b1", "b2"]);
-
-        let page = account
-            .articles(ArticleFilter::All, &ArticleScope::All, 2, 2)
-            .await
-            .unwrap();
-        assert_eq!(titles(page), ["n3", "b1"]);
     });
 }
 
@@ -61,7 +55,7 @@ fn filters_by_state_and_feed() {
     block_on(async {
         let (_dir, account, news) = two_feeds().await;
         let all = account
-            .articles(ArticleFilter::All, &ArticleScope::All, 10, 0)
+            .articles(ArticleFilter::All, &ArticleScope::All, None)
             .await
             .unwrap();
         let id = |title: &str| {
@@ -78,12 +72,12 @@ fn filters_by_state_and_feed() {
             articles.into_iter().filter_map(|a| a.title).collect()
         };
         let unread = account
-            .articles(ArticleFilter::Unread, &ArticleScope::All, 10, 0)
+            .articles(ArticleFilter::Unread, &ArticleScope::All, None)
             .await
             .unwrap();
         assert_eq!(titles(unread), ["n2", "n3", "b2"]);
         let starred = account
-            .articles(ArticleFilter::Starred, &ArticleScope::All, 10, 0)
+            .articles(ArticleFilter::Starred, &ArticleScope::All, None)
             .await
             .unwrap();
         assert_eq!(titles(starred), ["n2"]);
@@ -91,18 +85,67 @@ fn filters_by_state_and_feed() {
             .articles(
                 ArticleFilter::Unread,
                 &ArticleScope::Feed(news.id.clone()),
-                10,
-                0,
+                None,
             )
             .await
             .unwrap();
         assert_eq!(titles(news_unread), ["n2", "n3"]);
 
         let listed = account
-            .articles(ArticleFilter::All, &ArticleScope::All, 1, 0)
+            .articles(ArticleFilter::All, &ArticleScope::All, None)
             .await
             .unwrap();
         assert!(listed[0].read && !listed[0].starred);
+    });
+}
+
+#[test]
+fn keeps_the_open_article_its_filter_would_drop() {
+    block_on(async {
+        let (_dir, account, news) = two_feeds().await;
+        let all = account
+            .articles(ArticleFilter::All, &ArticleScope::All, None)
+            .await
+            .unwrap();
+        let n2 = all
+            .iter()
+            .find(|a| a.title.as_deref() == Some("n2"))
+            .unwrap()
+            .id
+            .clone();
+        let b1 = all
+            .iter()
+            .find(|a| a.title.as_deref() == Some("b1"))
+            .unwrap()
+            .id
+            .clone();
+        account.mark_read(&[n2.clone(), b1.clone()]).await.unwrap();
+        let titles = |articles: Vec<mariner_core::Article>| -> Vec<String> {
+            articles.into_iter().filter_map(|a| a.title).collect()
+        };
+
+        let unread = account
+            .articles(ArticleFilter::Unread, &ArticleScope::All, Some(&n2))
+            .await
+            .unwrap();
+        assert_eq!(titles(unread), ["n1", "n2", "n3", "b2"]);
+
+        // Only within the scope: another feed's article isn't pulled in.
+        let news_unread = account
+            .articles(
+                ArticleFilter::Unread,
+                &ArticleScope::Feed(news.id.clone()),
+                Some(&b1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(titles(news_unread), ["n1", "n3"]);
+
+        let starred = account
+            .articles(ArticleFilter::Starred, &ArticleScope::All, Some(&n2))
+            .await
+            .unwrap();
+        assert_eq!(titles(starred), ["n2"]);
     });
 }
 
@@ -115,7 +158,7 @@ fn marks_all_read_in_one_feed_or_every_feed() {
             .await
             .unwrap();
         let unread = account
-            .articles(ArticleFilter::Unread, &ArticleScope::All, 10, 0)
+            .articles(ArticleFilter::Unread, &ArticleScope::All, None)
             .await
             .unwrap();
         let titles: Vec<_> = unread.into_iter().filter_map(|a| a.title).collect();
@@ -124,7 +167,7 @@ fn marks_all_read_in_one_feed_or_every_feed() {
         account.mark_all_read(&ArticleScope::All).await.unwrap();
         assert!(
             account
-                .articles(ArticleFilter::Unread, &ArticleScope::All, 10, 0)
+                .articles(ArticleFilter::Unread, &ArticleScope::All, None)
                 .await
                 .unwrap()
                 .is_empty()
@@ -137,7 +180,7 @@ fn reads_one_article_with_its_content() {
     block_on(async {
         let (_dir, account, _) = two_feeds().await;
         let first = &account
-            .articles(ArticleFilter::All, &ArticleScope::All, 1, 0)
+            .articles(ArticleFilter::All, &ArticleScope::All, None)
             .await
             .unwrap()[0];
         let content = account.article(&first.id).await.unwrap().unwrap();
@@ -177,7 +220,7 @@ fn lists_and_marks_read_by_tag() {
             .unwrap();
         let daily = ArticleScope::Tag("Daily".into());
         let titles: Vec<String> = account
-            .articles(ArticleFilter::Unread, &daily, 10, 0)
+            .articles(ArticleFilter::Unread, &daily, None)
             .await
             .unwrap()
             .into_iter()
@@ -187,7 +230,7 @@ fn lists_and_marks_read_by_tag() {
 
         account.mark_all_read(&daily).await.unwrap();
         let unread = account
-            .articles(ArticleFilter::Unread, &ArticleScope::All, 10, 0)
+            .articles(ArticleFilter::Unread, &ArticleScope::All, None)
             .await
             .unwrap();
         assert_eq!(unread.len(), 2, "only the untagged blog's are left");

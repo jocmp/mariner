@@ -69,7 +69,7 @@ fn imports_without_fetching_then_refreshes() {
 
         account.refresh(None).await.unwrap();
         let articles = account
-            .articles(ArticleFilter::All, &ArticleScope::Tag("News".into()), 10, 0)
+            .articles(ArticleFilter::All, &ArticleScope::Tag("News".into()), None)
             .await
             .unwrap();
         assert_eq!(
