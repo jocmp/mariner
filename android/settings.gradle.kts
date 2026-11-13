@@ -33,3 +33,4 @@ plugins {
 rootProject.name = "Mariner"
 
 include(":app")
+include(":swiperefresh")

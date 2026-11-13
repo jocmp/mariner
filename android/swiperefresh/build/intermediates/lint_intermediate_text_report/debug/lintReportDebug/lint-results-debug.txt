@@ -1,0 +1,79 @@
+/Users/jocmp/.gradle/caches/9.9.1/transforms/08bbd5a0c0ddacc7bccf4102d39b9166/transformed/lifecycle-runtime-release/jars/lint.jar: Warning: Library lint checks reference invalid APIs; these checks will be skipped!
+
+Lint found an issue registry (androidx.lifecycle.lint.LifecycleRuntimeIssueRegistry)
+which contains some references to invalid API:
+org.jetbrains.kotlin.asJava.elements.KtLightModifierList#getKotlinOrigin(): org.jetbrains.kotlin.psi.KtModifierList
+(Referenced from androidx/lifecycle/lint/LifecycleWhenChecksKt.class)
+
+Therefore, this lint check library is not included
+in analysis. This affects the following lint checks:
+UnsafeLifecycleWhenUsage,RepeatOnLifecycleWrongUsage
+
+To use this lint check, upgrade to a more recent version
+of the library. [ObsoleteLintCustomCheck]
+
+   Explanation for issues of type "ObsoleteLintCustomCheck":
+   Lint can be extended with "custom checks": additional checks implemented by
+   developers and libraries to for example enforce specific API usages
+   required by a library or a company coding style guideline.
+
+   The Lint APIs are not yet stable, so these checks may either cause a
+   performance degradation, or stop working, or provide wrong results.
+
+   This warning flags custom lint checks that are found to be using obsolete
+   APIs and will need to be updated to run in the current lint environment.
+
+   It may also flag issues found to be using a newer version of the API,
+   meaning that you need to use a newer version of lint (or Android Studio or
+   Gradle plugin etc) to work with these checks.
+
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/CircularProgressPainter.kt:44: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var alpha by mutableStateOf(1f)
+                 ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/CircularProgressPainter.kt:50: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var arrowScale by mutableStateOf(1f)
+                      ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/CircularProgressPainter.kt:56: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var startTrim by mutableStateOf(0f)
+                     ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/CircularProgressPainter.kt:57: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var endTrim by mutableStateOf(0f)
+                   ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/CircularProgressPainter.kt:58: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var rotation by mutableStateOf(0f)
+                    ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/Slingshot.kt:81: Hint: Prefer mutableIntStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var offset: Int by mutableStateOf(0)
+                       ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/Slingshot.kt:82: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var startTrim: Float by mutableStateOf(0f)
+                            ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/Slingshot.kt:83: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var endTrim: Float by mutableStateOf(0f)
+                          ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/Slingshot.kt:84: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var rotation: Float by mutableStateOf(0f)
+                           ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/Slingshot.kt:85: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var arrowScale: Float by mutableStateOf(0f)
+                             ~~~~~~~~~~~~~~
+/Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/kotlin/com/jocmp/swiperefresh/SwipeRefreshIndicator.kt:140: Hint: Prefer mutableFloatStateOf instead of mutableStateOf [AutoboxingStateCreation from androidx.compose.runtime]
+    var offset by remember { mutableStateOf(0f) }
+                             ~~~~~~~~~~~~~~
+
+   Explanation for issues of type "AutoboxingStateCreation":
+   Calling mutableStateOf<T>() when T is either backed by a primitive type on
+   the JVM or is a value class results in a state implementation that requires
+   all state values to be boxed. This usually causes an additional allocation
+   for each state write, and adds some additional work to auto-unbox values
+   when reading the value of the state. Instead, prefer to use a specialized
+   primitive state implementation for Int, Long, Float, and Double when the
+   state does not need to track null values and does not override the default
+   SnapshotMutationPolicy. See mutableIntStateOf(), mutableLongStateOf(),
+   mutableFloatStateOf(), and mutableDoubleStateOf() for more information.
+
+   Vendor: Jetpack Compose
+   Identifier: androidx.compose.runtime
+   Feedback: https://issuetracker.google.com/issues/new?component=612128
+
+0 errors, 1 warning, 11 hints

@@ -96,6 +96,7 @@ dependencies {
   implementation(libs.coil.network.okhttp)
   implementation(libs.coil.gif)
   implementation(libs.androidx.work.runtime.ktx)
+  implementation(project(":swiperefresh"))
 }
 
 // The Rust core (crates/mariner-ffi) is built with cargo-ndk into generated

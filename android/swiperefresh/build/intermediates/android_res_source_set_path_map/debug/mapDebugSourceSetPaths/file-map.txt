@@ -1,0 +1,9 @@
+com.jocmp.swiperefresh-pngs-0 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/build/generated/res/pngs/debug
+com.jocmp.swiperefresh-updated_navigation_xml-1 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/build/generated/updated_navigation_xml/debug
+com.jocmp.swiperefresh-mergeDebugResources-2 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/build/intermediates/incremental/debug/mergeDebugResources/merged.dir
+com.jocmp.swiperefresh-mergeDebugResources-3 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/build/intermediates/incremental/debug/mergeDebugResources/stripped.dir
+com.jocmp.swiperefresh-debug-4 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/build/intermediates/merged_res/debug/mergeDebugResources
+com.jocmp.swiperefresh-debug-5 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/build/intermediates/packaged_res/debug/packageDebugResources
+com.jocmp.swiperefresh-debug-6 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/debug/res
+com.jocmp.swiperefresh-main-7 /Users/jocmp/dev/jocmp/mariner/android/swiperefresh/src/main/res
+gradleHome-0 /Users/jocmp/.gradle
