@@ -59,7 +59,13 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(model: AppViewModel, articleId: String, showBack: Boolean, onBack: () -> Unit) {
+fun ReaderScreen(
+  model: AppViewModel,
+  articleId: String,
+  showBack: Boolean,
+  onBack: () -> Unit,
+  onOpen: (String) -> Unit,
+) {
   val scope = rememberCoroutineScope()
   var content by remember(articleId) { mutableStateOf<ArticleContent?>(null) }
   var feedDocument by remember(articleId) { mutableStateOf<ArticleDocument?>(null) }
@@ -114,6 +120,10 @@ fun ReaderScreen(model: AppViewModel, articleId: String, showBack: Boolean, onBa
   }
 
   val shown = if (wantsFullText) fullTextDocument ?: feedDocument else feedDocument
+  // Its neighbors in the list, for pulling past the top or bottom.
+  val index = model.articles.indexOfFirst { it.id == articleId }
+  val previous = model.articles.getOrNull(index - 1).takeIf { index >= 0 }
+  val next = model.articles.getOrNull(index + 1).takeIf { index >= 0 }
   Scaffold(
     topBar = {
       TopAppBar(
@@ -127,8 +137,9 @@ fun ReaderScreen(model: AppViewModel, articleId: String, showBack: Boolean, onBa
       )
     }
   ) { padding ->
+    ArticleSwipe(previous, next, onOpen, Modifier.padding(padding)) {
     LazyColumn(
-      Modifier.padding(padding).fillMaxSize(),
+      Modifier.fillMaxSize(),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       val column = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp)
@@ -150,6 +161,7 @@ fun ReaderScreen(model: AppViewModel, articleId: String, showBack: Boolean, onBa
       } else {
         items(shown.blocks) { block -> BlockView(block, column.padding(bottom = 14.dp)) }
       }
+    }
     }
   }
 }

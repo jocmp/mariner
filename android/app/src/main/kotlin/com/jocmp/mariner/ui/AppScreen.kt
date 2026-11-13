@@ -85,7 +85,7 @@ fun AppScreen(model: AppViewModel = viewModel()) {
         onSelect = {
           model.select(it)
           while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
-          scope.launch { drawerState.close() }
+          if (!wide) scope.launch { drawerState.close() }
         },
       )
     }
@@ -113,6 +113,7 @@ fun AppScreen(model: AppViewModel = viewModel()) {
                 articleId = key.articleId,
                 showBack = !wide,
                 onBack = back,
+                onOpen = openArticle,
               )
             }
           },
