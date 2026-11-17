@@ -2,3 +2,5 @@ crates/mercury-parser/tests/fixtures/** linguist-vendored -diff -text
 crates/mercury-parser/tests/snapshots/** linguist-generated
 crates/mercury-parser/tests/dates/** linguist-generated -diff
 crates/mariner-feeds/tests/fixtures/** -text
+crates/mercury-parser/tests/custom_fixtures/** linguist-vendored -diff -text
+crates/mariner-condense/tests/fixtures/** linguist-vendored -diff -text
